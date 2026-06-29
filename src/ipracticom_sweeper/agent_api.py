@@ -351,6 +351,80 @@ def create_app() -> Flask:
             "predictions": [p.to_dict() for p in preds],
         })
 
+    # Evidence export endpoint — build a signed bundle of audit + repairs
+    @app.route("/api/evidence/export", methods=["GET"])
+    @require_auth
+    def api_evidence_export():
+        """Build an evidence bundle (audit log + repairs + snapshot summary).
+
+        Query params:
+          hours: how far back to look (default 24)
+          format: 'json' (default) or 'inline' (returns bundle inline)
+        """
+        from pathlib import Path
+        from ipracticom_sweeper.evidence.bundle import (
+            build_evidence_bundle, export_bundle_to_json, verify_bundle,
+        )
+
+        try:
+            hours = min(int(request.args.get("hours", "24")), 720)
+        except ValueError:
+            hours = 24
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+        host = os.environ.get("IPRACTICOM_SWEEPER_HOST_ID", "localhost")
+        audit_log = state_dir / "audit" / "repairs.jsonl"
+        since_ts = time.time() - (hours * 3600)
+
+        # Read audit log (best-effort)
+        audit_entries: list = []
+        if audit_log.exists():
+            try:
+                import json as _json
+                cutoff = int(since_ts)
+                with open(audit_log) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = _json.loads(line)
+                            ts = entry.get("ts") or 0
+                            if ts >= cutoff:
+                                audit_entries.append(entry)
+                        except _json.JSONDecodeError:
+                            continue
+            except (OSError, PermissionError):
+                pass
+
+        # Build bundle (repairs list will be inside audit_entries, filtered below)
+        repair_entries = [e for e in audit_entries if e.get("kind") == "repair_executed"]
+
+        bundle = build_evidence_bundle(
+            host=host,
+            agent_version="0.4.0",
+            audit_entries=audit_entries,
+            repair_entries=repair_entries,
+            since_ts=since_ts,
+            until_ts=time.time(),
+        )
+
+        # Optional: write to file and return path
+        if request.args.get("format") == "file":
+            out_path = state_dir / "evidence" / f"bundle-{int(time.time())}.json"
+            export_bundle_to_json(bundle, out_path)
+            return jsonify({
+                "ok": True,
+                "path": str(out_path),
+                "verified": verify_bundle(bundle),
+                "audit_entries": len(audit_entries),
+                "repair_entries": len(repair_entries),
+            })
+
+        return jsonify(bundle.to_dict())
+
     return app
 
 
