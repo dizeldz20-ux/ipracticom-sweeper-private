@@ -84,3 +84,12 @@ fd_check:
   warn_percent: 80
   crit_percent: 95
   top_n: 5
+
+aide:
+  critical_paths:
+    - /etc/
+    - /bin/
+    - /usr/bin/
+    - /usr/sbin/
+    - /sbin/
+    - /root/.ssh/

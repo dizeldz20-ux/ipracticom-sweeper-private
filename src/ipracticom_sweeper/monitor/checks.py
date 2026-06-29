@@ -13,7 +13,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, fd_check, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aide_check, aws, cpu, disk, fd_check, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -146,6 +146,14 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
     fd_status = fd_check.evaluate(fd_values, rules)
     snapshot["modules"]["fd_check"] = {"values": fd_values, "status": fd_status}
     audit.monitor_event("fd_check", fd_values, fd_status)
+
+    # AIDE file integrity (graceful if not installed or no baseline)
+    if shutil.which("aide"):
+        aide_report = aide_check.collect_aide_report()
+        aide_values = aide_report.to_dict()
+        aide_status = aide_check.evaluate(aide_values, rules)
+        snapshot["modules"]["aide"] = {"values": aide_values, "status": aide_status}
+        audit.monitor_event("aide", aide_values, aide_status)
 
     # Uptime / boot time
     up_values = uptime.collect()
