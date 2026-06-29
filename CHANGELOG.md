@@ -32,8 +32,21 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 
 ### Added — Production Hardening (Slice 8.0)
 - **bootstrap.sh** — added system deps: `smartmontools`, `sysstat`, `aide`, `python3-venv`, `python3-pip`
-- **pyproject.toml** — bumped to v0.4.0, added `[test]` extras (`pytest`, `freezegun`)
+- **pyproject.toml** — bumped to v0.4.0, added `[test]` extras (`pytest`, `freezegun`, `pytest-asyncio`)
 - **Editable install with extras** — `pip install -e ".[test]"` for test deps
+
+### Added — Telegram Dashboard (v0.4.1)
+- **Telegram bot** (`telegram_bot/`) — full Hebrew dashboard as a Telegram bot, no dashboard/domain needed
+  - `config.py` — env-based `BotConfig` with `ALLOWED_CHAT_IDS` whitelist (fail-fast on missing)
+  - `auth.py` — `@authorized_only` decorator; silent rejection on unauthorized
+  - `services/agent_client.py` — async httpx wrapper for `/api/snapshot`, `/api/history/<m>`, `/api/predictions`, `/api/evidence/export`
+  - `keyboards.py` — inline keyboards (main/status/history) with Hebrew labels + 🔙 back button
+  - `formatter.py` — HTML formatting with DEFCON emoji, smart truncation, Hebrew error messages
+  - `handlers.py` — `start`/`status`/`problems`/`history`/`security` returning `{"text", "reply_markup"}` dicts
+  - `bot.py` — `python-telegram-bot` Application wiring + 8 handlers + global error handler
+- **`scripts/install_telegram_bot.sh`** — creates `/etc/ipracticom-sweeper/telegram-bot.env` + systemd unit, with `--uninstall` flag
+- **`bootstrap.sh`** — calls telegram bot installer (set `SKIP_TELEGRAM_BOT=1` to opt out)
+- **Tests: 580** (531 → 580, +49 new, 0 failing)
 
 ### Tests
 - **469 → 531** (+62 new tests, 0 failing)

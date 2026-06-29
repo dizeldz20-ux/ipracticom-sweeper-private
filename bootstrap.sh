@@ -102,6 +102,19 @@ else
     warn "systemd not available — use 'make run' or 'make quickstart' instead"
 fi
 
+# --- Install Telegram bot (optional, on by default) ---
+if [[ -f "${REPO_DIR}/scripts/install_telegram_bot.sh" ]]; then
+    if [[ "${SKIP_TELEGRAM_BOT:-0}" != "1" ]]; then
+        log "Installing Telegram bot..."
+        bash "${REPO_DIR}/scripts/install_telegram_bot.sh"
+        ok "Telegram bot env file ready (needs TELEGRAM_BOT_TOKEN + ALLOWED_CHAT_IDS)"
+    else
+        warn "Skipping Telegram bot install (SKIP_TELEGRAM_BOT=1)"
+    fi
+else
+    warn "scripts/install_telegram_bot.sh not found, skipping Telegram bot setup"
+fi
+
 # --- Verify ---
 log "Verifying installation..."
 if python3 -c "import ipracticom_sweeper; print('OK', ipracticom_sweeper.__file__)" 2>/dev/null; then
