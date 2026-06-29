@@ -319,6 +319,38 @@ def create_app() -> Flask:
         finally:
             db.close()
 
+    # Predictions endpoint — read time-series, return threshold crossings
+    @app.route("/api/predictions", methods=["GET"])
+    @require_auth
+    def api_predictions():
+        """Return current predictions for all configured metrics."""
+        from pathlib import Path
+        from ipracticom_sweeper.predict.integration import collect_predictions
+        from ipracticom_sweeper.config import load_rules
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+        db_path = state_dir / "metrics.db"
+        if not db_path.exists():
+            return jsonify({
+                "predictions": [],
+                "note": "no data yet (db file missing)",
+            })
+
+        host = os.environ.get("IPRACTICOM_SWEEPER_HOST_ID", "localhost")
+        try:
+            rules = load_rules()
+        except Exception:
+            rules = {}
+        thresholds = rules.get("predict", {}).get("thresholds", None)
+        preds = collect_predictions(db_path, host=host, thresholds=thresholds)
+        return jsonify({
+            "host": host,
+            "count": len(preds),
+            "predictions": [p.to_dict() for p in preds],
+        })
+
     return app
 
 

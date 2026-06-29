@@ -97,3 +97,10 @@ aide:
 storage:
   enabled: true
   retention_days: 30
+
+predict:
+  thresholds:
+    disk.used_percent: 95.0
+    memory.used_percent: 95.0
+    fd_check.used_percent: 95.0
+    cpu.load_5min: 8.0

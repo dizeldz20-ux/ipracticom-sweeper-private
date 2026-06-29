@@ -185,6 +185,9 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
     # Persist numeric metrics to local time-series DB (graceful if disabled)
     _persist_to_timeseries(snapshot, rules)
 
+    # Run predictions on collected time-series data
+    _run_predictions(snapshot, rules)
+
     logger.info(
         "monitor_complete",
         overall=worst,
@@ -278,6 +281,34 @@ def _persist_to_timeseries(snapshot: dict, rules: dict) -> None:
 def _defcon_to_int(overall: str) -> int:
     """Map overall status string to a numeric 1-5 (lower = worse)."""
     return {"ok": 5, "warn": 4, "crit": 2}.get(overall, 3)
+
+
+def _run_predictions(snapshot: dict, rules: dict) -> None:
+    """Run predict layer on time-series data, attach to snapshot.
+
+    Reads the local metrics.db, runs linear regression to predict
+    threshold crossings, and writes the predictions to snapshot["predictions"].
+    Graceful: no-op if storage is disabled or db missing.
+    """
+    import os
+    from ipracticom_sweeper.predict.integration import collect_predictions
+
+    state_dir = Path(os.environ.get(
+        "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+    ))
+    db_path = state_dir / "metrics.db"
+    if not db_path.exists():
+        snapshot["predictions"] = []
+        return
+
+    host = os.environ.get("IPRACTICOM_SWEEPER_HOST_ID", "localhost")
+    thresholds = rules.get("predict", {}).get("thresholds", None)
+    try:
+        preds = collect_predictions(db_path, host=host, thresholds=thresholds)
+        snapshot["predictions"] = [p.to_dict() for p in preds]
+    except Exception as e:
+        logger.debug("predict_skipped", error=str(e))
+        snapshot["predictions"] = []
 
 
 def _extract_scalar_metric(values: dict, dotted_key: str) -> float | None:
