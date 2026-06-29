@@ -65,3 +65,9 @@ smart:
 
 kernel:
   window_minutes: 5
+
+iostat:
+  await_warn_ms: 50
+  await_crit_ms: 200
+  util_warn_percent: 80
+  util_crit_percent: 95

@@ -7,12 +7,13 @@ is called; results are combined into one snapshot dict.
 from __future__ import annotations
 
 from typing import Any
+import shutil
 
 import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, kernel_errors, logs, memory, network, processes, security, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, iostat, kernel_errors, logs, memory, network, processes, security, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -112,6 +113,15 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
     kernel_status = kernel_errors.evaluate(kernel_values, rules)
     snapshot["modules"]["kernel"] = {"values": kernel_values, "status": kernel_status}
     audit.monitor_event("kernel", kernel_values, kernel_status)
+
+    # I/O latency per device (iostat) — graceful if binary missing
+    if shutil.which("iostat"):
+        io_devices = iostat.collect_iostat()
+        if io_devices:
+            io_values = {"devices": [d.to_dict() for d in io_devices]}
+            io_status = iostat.evaluate(io_values, rules)
+            snapshot["modules"]["iostat"] = {"values": io_values, "status": io_status}
+            audit.monitor_event("iostat", io_values, io_status)
 
     # Uptime / boot time
     up_values = uptime.collect()
