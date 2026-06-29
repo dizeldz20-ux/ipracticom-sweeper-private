@@ -79,3 +79,8 @@ process_tracker:
   cpu_crit_percent: 95
   restart_warn: 3
   restart_crit: 10
+
+fd_check:
+  warn_percent: 80
+  crit_percent: 95
+  top_n: 5

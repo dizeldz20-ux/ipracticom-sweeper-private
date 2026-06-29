@@ -13,7 +13,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, fd_check, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -136,6 +136,16 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
     pt_status = process_tracker.evaluate(pt_values, rules)
     snapshot["modules"]["process_tracker"] = {"values": pt_values, "status": pt_status}
     audit.monitor_event("process_tracker", pt_values, pt_status)
+
+    # File descriptor monitor — system-wide + top-N consumers
+    fd_top_n = rules.get("fd_check", {}).get("top_n", 5)
+    fd_values = {
+        "system": fd_check.collect_fd_system().to_dict(),
+        "top_processes": fd_check.collect_top_fd_processes(top_n=fd_top_n),
+    }
+    fd_status = fd_check.evaluate(fd_values, rules)
+    snapshot["modules"]["fd_check"] = {"values": fd_values, "status": fd_status}
+    audit.monitor_event("fd_check", fd_values, fd_status)
 
     # Uptime / boot time
     up_values = uptime.collect()
