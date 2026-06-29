@@ -1,0 +1,295 @@
+"""Agent HTTP API.
+
+Exposes the sweeper state over HTTP so that remote dashboards (or any
+HTTP client) can read the current state without shell access. This is
+the same API the dashboard already exposes locally — but packaged as
+a standalone, auth-protected service.
+
+Routes (all return JSON):
+  GET  /healthz                  liveness + identity
+  GET  /api/snapshot             latest cached pipeline result
+  GET  /api/notify/test          (admin only) send a test notification
+  POST /api/run                  (admin only) trigger a fresh sweep
+
+Auth: bearer token via env var AGENT_API_TOKEN. If unset, the API
+runs in OPEN mode (intended for local-only deployments behind a
+firewall; the bind address defaults to 127.0.0.1).
+
+Usage:
+  AGENT_API_TOKEN=secret python -m ipracticom_sweeper.agent_api --port 8787
+
+This service is independent of the dashboard — it does not render
+HTML. The dashboard, when configured with `remote_url`, will fetch
+from this service instead of running the pipeline locally.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hmac
+import os
+from datetime import datetime, timezone
+from functools import wraps
+from typing import Any
+
+from flask import Flask, abort, jsonify, request
+
+from ipracticom_sweeper.config import (
+    Connector,
+    add_connector,
+    get_connector,
+    get_server_id,
+    load_connectors,
+    load_rules,
+    mark_connector_collected,
+    mark_connector_error,
+    remove_connector,
+    update_connector,
+)
+from ipracticom_sweeper.dashboard import (
+    CACHE_DIR,
+    LAST_RESULT_FILE,
+    _read_last_result,
+    _write_last_result,
+)
+from ipracticom_sweeper.pipeline import run_pipeline
+from ipracticom_sweeper.slack_actions.endpoint import SlackEndpoint
+from ipracticom_sweeper.slack_actions.commands import SlackCommandHandler
+
+
+def create_app() -> Flask:
+    app = Flask(__name__)
+    token = os.environ.get("AGENT_API_TOKEN", "")
+
+    def require_auth(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if not token:
+                # OPEN mode (no token configured) — caller should bind to localhost
+                return fn(*args, **kwargs)
+            provided = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if not hmac.compare_digest(provided, token):
+                return jsonify({"error": "unauthorized"}), 401
+            return fn(*args, **kwargs)
+        return wrapper
+
+    # --- Healthz -----------------------------------------------------------
+
+    @app.route("/healthz")
+    def healthz():
+        return jsonify({
+            "ok": True,
+            "service": "ipracticom-sweeper-agent",
+            "server_id": get_server_id(),
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "auth": "token" if token else "open",
+        })
+
+    # --- Snapshot ----------------------------------------------------------
+
+    @app.route("/api/snapshot")
+    @require_auth
+    def api_snapshot():
+        result = _read_last_result()
+        if not result:
+            return jsonify({"error": "no cached snapshot"}), 404
+        return jsonify(result)
+
+    @app.route("/api/snapshot/raw")
+    @require_auth
+    def api_snapshot_raw():
+        """Return the raw JSONL monitor events (audit log)."""
+        log_path = "/var/lib/ipracticom-sweeper/audit/monitor.jsonl"
+        events = []
+        try:
+            with open(log_path) as f:
+                events = [line.strip() for line in f if line.strip()][-100:]
+        except FileNotFoundError:
+            return jsonify({"error": "no audit log yet", "events": []}), 200
+        return jsonify({"events": events, "count": len(events)})
+
+    # --- Run trigger -------------------------------------------------------
+
+    @app.route("/api/run", methods=["POST", "GET"])
+    @require_auth
+    def api_run():
+        """Trigger a fresh sweep, cache the result, return it."""
+        try:
+            from ipracticom_sweeper.config import load_rules
+
+            rules = load_rules()
+            result = run_pipeline(rules, auto_repair=True, dry_run=False)
+            d = result.to_dict()
+            d["server"] = get_server_id()
+            _write_last_result(d)
+            return jsonify(d)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # --- Notify (admin only, gated by token) -------------------------------
+
+    @app.route("/api/notify/test", methods=["POST"])
+    @require_auth
+    def api_notify_test():
+        import asyncio
+        from ipracticom_sweeper.notify import notify_pipeline_result
+
+        result = _read_last_result()
+        if not result:
+            return jsonify({"error": "no cached snapshot"}), 404
+        try:
+            sent = asyncio.run(notify_pipeline_result(result, force=True))
+            return jsonify({"sent": sent})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # --- Slack Events endpoint -------------------------------------------
+    # Receives button clicks from Slack (Approve / Silence / Run Repair).
+    # Verifies the X-Slack-Signature using SLACK_SIGNING_SECRET, parses the
+    # block_actions payload, and dispatches to SlackActionHandler.
+    #
+    # This endpoint is intentionally NOT gated by AGENT_API_TOKEN — Slack
+    # authenticates via request signing, not bearer tokens. We *do* require
+    # a valid signature (HMAC-SHA256) which is cryptographically stronger.
+
+    @app.route("/slack/events", methods=["POST"])
+    def slack_events():
+        signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
+        if not signing_secret:
+            return jsonify({
+                "error": "slack_not_configured",
+                "reason": "SLACK_SIGNING_SECRET env var is empty",
+            }), 503
+
+        # Build the command handler lazily so imports stay fast for agents
+        # that never receive Slack commands.
+        command_handler = SlackCommandHandler()
+        endpoint = SlackEndpoint()
+        # Read raw body BEFORE Flask parses it (we need the exact bytes for HMAC)
+        raw_body = request.get_data(cache=True) or b""
+        response = endpoint.handle_request(
+            body=raw_body,
+            timestamp_header=request.headers.get("X-Slack-Request-Timestamp"),
+            signature_header=request.headers.get("X-Slack-Signature"),
+            signing_secret=signing_secret,
+            command_handler=command_handler,
+        )
+        return jsonify(response.body), response.status_code
+
+    # --- Connectors (AWS SSM) ----------------------------------------------
+    # CRUD for remote hosts the operator wants the agent to monitor via SSM.
+    # Stored in $IPRACTICOM_SWEEPER_STATE_DIR/connectors.yaml.
+
+    @app.route("/api/connectors", methods=["GET"])
+    @require_auth
+    def api_connectors_list():
+        """List all configured SSM connectors."""
+        return jsonify([c.to_dict() for c in load_connectors()])
+
+    @app.route("/api/connectors", methods=["POST"])
+    @require_auth
+    def api_connectors_create():
+        """Create a new connector. Body: {name, instance_id, region?, tags?, enabled?}"""
+        payload = request.get_json(silent=True) or {}
+        try:
+            connector = Connector.from_dict(payload)
+        except (ValueError, TypeError) as e:
+            return jsonify({"error": str(e)}), 400
+        try:
+            add_connector(connector)
+        except ValueError as e:  # duplicate name
+            return jsonify({"error": str(e)}), 409
+        return jsonify(connector.to_dict()), 201
+
+    @app.route("/api/connectors/<name>", methods=["GET"])
+    @require_auth
+    def api_connectors_get(name):
+        """Get one connector by name."""
+        c = get_connector(name)
+        if c is None:
+            return jsonify({"error": "not_found"}), 404
+        return jsonify(c.to_dict())
+
+    @app.route("/api/connectors/<name>", methods=["PATCH"])
+    @require_auth
+    def api_connectors_update(name):
+        """Update fields on a connector. Body: any subset of mutable fields.
+
+        Immutable: name (it's the identity), created_at.
+        """
+        payload = request.get_json(silent=True) or {}
+        try:
+            updated = update_connector(name, **payload)
+        except KeyError:
+            return jsonify({"error": "not_found"}), 404
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify(updated.to_dict())
+
+    @app.route("/api/connectors/<name>", methods=["DELETE"])
+    @require_auth
+    def api_connectors_delete(name):
+        """Delete a connector. Returns 204 on success, 404 if not found."""
+        if not remove_connector(name):
+            return jsonify({"error": "not_found"}), 404
+        return ("", 204)
+
+    @app.route("/api/connectors/<name>/test", methods=["POST"])
+    @require_auth
+    def api_connectors_test(name):
+        """Trigger a single SSM collection for one connector (sync, may take 5-30s).
+
+        Used by the dashboard 'Test' button — gives operators immediate feedback
+        whether their IAM/SSM setup works, instead of waiting for the next loop tick.
+        """
+        c = get_connector(name)
+        if c is None:
+            return jsonify({"error": "not_found"}), 404
+        try:
+            from ipracticom_sweeper.fleet import AwsSsmConnector, SsmError
+            connector = AwsSsmConnector(region=c.region)
+            snapshot = connector.collect_one(c.instance_id)
+            mark_connector_collected(name)
+            return jsonify({"ok": True, "snapshot": snapshot})
+        except SsmError as e:
+            mark_connector_error(name, str(e))
+            return jsonify({"ok": False, "error": str(e)}), 502
+        except Exception as e:
+            mark_connector_error(name, str(e))
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    # URL verification handshake (Slack sends this once when registering the URL).
+    # We reply with the challenge value to confirm we own this endpoint.
+    @app.route("/slack/events", methods=["GET"])
+    def slack_events_challenge():
+        challenge = request.args.get("challenge", "")
+        return challenge, 200, {"Content-Type": "text/plain"}
+
+    return app
+
+
+def main():
+    parser = argparse.ArgumentParser(description="iPracticom Sweeper Agent API")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
+
+    app = create_app()
+    print(f"[agent_api] Starting on {args.host}:{args.port}")
+    print(f"[agent_api] Auth: {'token' if os.environ.get('AGENT_API_TOKEN') else 'OPEN (localhost only)'}")
+
+    # Start the fleet collector loop (no-op if there are no enabled connectors).
+    # Imported lazily to keep cold-start fast for agents that don't use fleet mode.
+    try:
+        from ipracticom_sweeper.fleet import start_collector_loop
+        start_collector_loop()
+        print(f"[agent_api] Fleet collector loop started")
+    except Exception as e:
+        print(f"[agent_api] Fleet collector disabled: {e}")
+
+    app.run(host=args.host, port=args.port, debug=args.debug)
+
+
+if __name__ == "__main__":
+    main()
