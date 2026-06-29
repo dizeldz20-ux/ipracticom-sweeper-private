@@ -93,3 +93,7 @@ aide:
     - /usr/sbin/
     - /sbin/
     - /root/.ssh/
+
+storage:
+  enabled: true
+  retention_days: 30

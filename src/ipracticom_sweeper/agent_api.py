@@ -265,6 +265,60 @@ def create_app() -> Flask:
         challenge = request.args.get("challenge", "")
         return challenge, 200, {"Content-Type": "text/plain"}
 
+    # Time-series history endpoint — read scalar metrics collected over time
+    @app.route("/api/history/<metric>", methods=["GET"])
+    @require_auth
+    def api_history(metric):
+        """Return time-series samples for a single metric.
+
+        Query params:
+          host:   host id (default: current host)
+          hours:  how far back to look (default 24, max 720)
+          limit:  max samples (default 1000)
+        """
+        from pathlib import Path
+        from ipracticom_sweeper.storage import TimeSeriesDB
+
+        host = request.args.get("host") or os.environ.get(
+            "IPRACTICOM_SWEEPER_HOST_ID", "localhost"
+        )
+        try:
+            hours = min(int(request.args.get("hours", "24")), 720)
+        except ValueError:
+            hours = 24
+        try:
+            limit = min(int(request.args.get("limit", "1000")), 10000)
+        except ValueError:
+            limit = 1000
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+        db_path = state_dir / "metrics.db"
+        if not db_path.exists():
+            return jsonify({
+                "host": host,
+                "metric": metric,
+                "samples": [],
+                "note": "no data yet (db file missing)",
+            })
+
+        db = TimeSeriesDB(db_path)
+        try:
+            since_ts = int(time.time()) - (hours * 3600)
+            samples = db.query(host=host, metric=metric, since_ts=since_ts, limit=limit)
+            # Reverse so it's oldest-first (for charting)
+            samples.reverse()
+            return jsonify({
+                "host": host,
+                "metric": metric,
+                "hours": hours,
+                "count": len(samples),
+                "samples": samples,
+            })
+        finally:
+            db.close()
+
     return app
 
 

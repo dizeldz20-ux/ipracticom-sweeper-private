@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 import shutil
+import time
+from pathlib import Path
 
 import structlog
 
@@ -180,6 +182,9 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
         worst = mod_data["status"] if rank[mod_data["status"]] > rank[worst] else worst
     snapshot["overall_status"] = worst
 
+    # Persist numeric metrics to local time-series DB (graceful if disabled)
+    _persist_to_timeseries(snapshot, rules)
+
     logger.info(
         "monitor_complete",
         overall=worst,
@@ -187,6 +192,111 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
     )
 
     return snapshot
+
+
+def _persist_to_timeseries(snapshot: dict, rules: dict) -> None:
+    """Write key numeric metrics to the local time-series DB.
+
+    Extracts a small set of high-signal scalars (defcon, CPU%, memory%,
+    disk% per mount, FD%, overall_status as numeric) and appends them
+    to the SQLite store. The agent_api /api/history endpoint reads
+    from the same store.
+
+    Storage path comes from IPRACTICOM_SWEEPER_STATE_DIR env var
+    (default /var/lib/ipracticom-sweeper), consistent with other state.
+    """
+    storage_cfg = rules.get("storage", {})
+    if not storage_cfg.get("enabled", True):
+        return
+    retention_days = storage_cfg.get("retention_days", 30)
+
+    import os
+    from ipracticom_sweeper.storage import TimeSeriesDB
+    state_dir = Path(os.environ.get(
+        "IPRACTICOM_SWEEPER_STATE_DIR",
+        "/var/lib/ipracticom-sweeper",
+    ))
+    try:
+        db = TimeSeriesDB(state_dir / "metrics.db", retention_days=retention_days)
+    except (OSError, PermissionError) as e:
+        # No write permission (e.g. dev env) — skip silently
+        logger.debug("timeseries_init_skipped", error=str(e))
+        return
+
+    host = os.environ.get("IPRACTICOM_SWEEPER_HOST_ID", "localhost")
+    now = int(time.time())
+
+    # Overall defcon → store as int 1-5
+    defcon = _defcon_to_int(snapshot.get("overall_status", "ok"))
+    try:
+        db.write(host=host, metric="agent.defcon", value=defcon, ts=now)
+    except Exception as e:
+        logger.debug("timeseries_write_skipped", metric="agent.defcon", error=str(e))
+
+    # Per-module numeric metrics
+    metrics_to_persist = [
+        ("cpu", "cpu.idle_percent"),
+        ("cpu", "cpu.load_5min"),
+        ("memory", "memory.used_percent"),
+        ("disk", "disk.used_percent"),
+        ("fd_check", "fd_check.used_percent"),
+        ("process_tracker", "process_tracker.cpu_top"),
+        ("process_tracker", "process_tracker.mem_top"),
+    ]
+    for module_key, metric_name in metrics_to_persist:
+        mod_data = snapshot.get("modules", {}).get(module_key)
+        if not mod_data:
+            continue
+        value = _extract_scalar_metric(mod_data.get("values", {}), metric_name)
+        if value is None:
+            continue
+        try:
+            db.write(host=host, metric=metric_name, value=float(value), ts=now)
+        except Exception as e:
+            logger.debug("timeseries_write_skipped", metric=metric_name, error=str(e))
+
+    # Per-mount disk% (one row per mount)
+    disk_data = snapshot.get("modules", {}).get("disk", {}).get("values", {})
+    for mount in disk_data.get("mounts", []) or []:
+        mountpoint = mount.get("mountpoint") or mount.get("target")
+        used = mount.get("used_percent")
+        if not mountpoint or used is None:
+            continue
+        try:
+            db.write(
+                host=host,
+                metric=f"disk.used_percent.{mountpoint}",
+                value=float(used),
+                ts=now,
+            )
+        except Exception as e:
+            logger.debug("timeseries_write_skipped", metric=f"disk.{mountpoint}", error=str(e))
+
+    db.close()
+
+
+def _defcon_to_int(overall: str) -> int:
+    """Map overall status string to a numeric 1-5 (lower = worse)."""
+    return {"ok": 5, "warn": 4, "crit": 2}.get(overall, 3)
+
+
+def _extract_scalar_metric(values: dict, dotted_key: str) -> float | None:
+    """Pull a scalar numeric value out of a module's values dict.
+
+    dotted_key uses dots for nested access. Returns None if not found
+    or not numeric.
+    """
+    cur = values
+    for part in dotted_key.split(".")[1:]:  # skip module prefix
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+        if cur is None:
+            return None
+    try:
+        return float(cur)
+    except (TypeError, ValueError):
+        return None
 
 
 if __name__ == "__main__":
