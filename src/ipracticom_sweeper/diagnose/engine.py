@@ -368,8 +368,15 @@ def diagnose_http_wrapper(findings: dict, rules: dict) -> list[Problem]:
     return diagnose_http(findings, rules)
 
 
-# Register lazy wrapper
+def diagnose_ssl_wrapper(findings: dict, rules: dict) -> list[Problem]:
+    """Lazy import to avoid circular dependency at module load."""
+    from ipracticom_sweeper.diagnose.ssl_diagnose import diagnose_ssl
+    return diagnose_ssl(findings, rules)
+
+
+# Register lazy wrappers
 DIAGNOSERS["http"] = diagnose_http_wrapper
+DIAGNOSERS["ssl"] = diagnose_ssl_wrapper
 
 
 def diagnose(findings: dict[str, Any], rules: dict[str, Any]) -> Diagnosis:

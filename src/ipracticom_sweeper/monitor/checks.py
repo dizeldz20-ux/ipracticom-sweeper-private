@@ -12,7 +12,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, logs, memory, network, processes, security, services, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, logs, memory, network, processes, security, services, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -86,6 +86,15 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
         http_status = http_check.evaluate(http_values, rules)
         snapshot["modules"]["http"] = {"values": http_values, "status": http_status}
         audit.monitor_event("http", http_values, http_status)
+
+    # SSL cert expiry (graceful if no hosts configured)
+    ssl_hosts = rules.get("ssl", {}).get("hosts", [])
+    if ssl_hosts:
+        ssl_results = ssl_check.collect_ssl_certs(ssl_hosts)
+        ssl_values = {"certificates": [r.to_dict() for r in ssl_results]}
+        ssl_status = ssl_check.evaluate(ssl_values, rules)
+        snapshot["modules"]["ssl"] = {"values": ssl_values, "status": ssl_status}
+        audit.monitor_event("ssl", ssl_values, ssl_status)
 
     # Uptime / boot time
     up_values = uptime.collect()

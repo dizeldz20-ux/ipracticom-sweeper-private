@@ -51,3 +51,8 @@ security:
   sudo_failures_per_hour_warn: 3http:
   slow_response_ms: 2000
   endpoints: []
+
+ssl:
+  warn_days: 30
+  crit_days: 7
+  hosts: []
