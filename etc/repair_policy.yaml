@@ -1,0 +1,20 @@
+# iPracticom Sweeper — Repair Policy
+# default: 'auto' = safe actions run without approval
+#           'needs_approval' = operator must approve via /approvals UI
+#
+# Auto-execute (safe, reversible, no service impact):
+#   - drop_caches:         frees page cache, never destructive
+#   - log_truncate_journald: rotates journald, frees disk
+#   - top_processes_snapshot: read-only diagnostic
+#   - notify_human:        just sends a webhook
+#
+# Needs approval (service-affecting):
+#   - service_restart:    could cause downtime if service won't come back
+
+default: auto
+repairs:
+  drop_caches: auto
+  log_truncate_journald: auto
+  top_processes_snapshot: auto
+  notify_human: auto
+  service_restart: needs_approval
