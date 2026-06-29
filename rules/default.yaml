@@ -62,3 +62,6 @@ smart:
   reallocated_crit: 100
   temp_warn_c: 55
   devices: []
+
+kernel:
+  window_minutes: 5

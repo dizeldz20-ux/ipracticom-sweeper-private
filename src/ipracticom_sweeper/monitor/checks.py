@@ -12,7 +12,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, logs, memory, network, processes, security, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, kernel_errors, logs, memory, network, processes, security, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -105,6 +105,13 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
             smart_status = smart_check.evaluate(smart_values, rules)
             snapshot["modules"]["smart"] = {"values": smart_values, "status": smart_status}
             audit.monitor_event("smart", smart_values, smart_status)
+
+    # Kernel errors (Oops, MCE, segfaults) — always on, low cost
+    kernel_window = rules.get("kernel", {}).get("window_minutes", 5)
+    kernel_values = kernel_errors.collect_kernel_errors(window_minutes=kernel_window)
+    kernel_status = kernel_errors.evaluate(kernel_values, rules)
+    snapshot["modules"]["kernel"] = {"values": kernel_values, "status": kernel_status}
+    audit.monitor_event("kernel", kernel_values, kernel_status)
 
     # Uptime / boot time
     up_values = uptime.collect()
