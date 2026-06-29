@@ -15,7 +15,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aide_check, aws, cpu, disk, fd_check, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aide_check, aws, cpu, disk, fd_check, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, security_baseline, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -156,6 +156,16 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
         aide_status = aide_check.evaluate(aide_values, rules)
         snapshot["modules"]["aide"] = {"values": aide_values, "status": aide_status}
         audit.monitor_event("aide", aide_values, aide_status)
+
+    # Security baseline (SSH config + SUID binaries + listening ports)
+    sb_values = {
+        "sshd_config": security_baseline.collect_sshd_config(),
+        "suid_binaries": security_baseline.scan_suid_binaries(),
+        "listening_ports": security_baseline.collect_listening_ports(),
+    }
+    sb_status = security_baseline.evaluate(sb_values, rules)
+    snapshot["modules"]["security_baseline"] = {"values": sb_values, "status": sb_status}
+    audit.monitor_event("security_baseline", sb_values, sb_status)
 
     # Uptime / boot time
     up_values = uptime.collect()

@@ -104,3 +104,16 @@ predict:
     memory.used_percent: 95.0
     fd_check.used_percent: 95.0
     cpu.load_5min: 8.0
+
+security_baseline:
+  expected_ssh_keys:
+    PermitRootLogin: prohibit-password
+    PasswordAuthentication: "no"
+  expected_suid: []
+  allowed_ports:
+    - 22
+    - 25
+    - 80
+    - 443
+    - 8810
+    - 8804
