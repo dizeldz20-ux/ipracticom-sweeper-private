@@ -22,6 +22,8 @@
       <a href="{{ url_for('history') }}" {% if request.endpoint == 'history' %}class="active"{% endif %}>היסטוריה</a>
       <a href="{{ url_for('approvals_view') }}" {% if request.endpoint in ('approvals_view', 'approval_detail', 'approval_approve', 'approval_reject') %}class="active"{% endif %}>אישורים</a>
       <a href="{{ url_for('settings') }}" {% if request.endpoint in ('settings', 'settings_test') %}class="active"{% endif %}>הגדרות</a>
+      <a href="{{ url_for('settings_connectors') }}" {% if request.endpoint == 'settings_connectors' %}class="active"{% endif %}>מחברים</a>
+      <a href="{{ url_for('fleet_view') }}" {% if request.endpoint in ('fleet_view', 'fleet_host_detail') %}class="active"{% endif %}>צי</a>
     </nav>
   </div>
 </header>
