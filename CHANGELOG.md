@@ -2,6 +2,51 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] — 2026-06-29 — Comprehensive Observability
+
+### Added — 8 New Collectors (Slices 1.1–1.8)
+- **HTTP healthcheck** (`monitor/http_check.py`) — endpoint probing, status/time/error, supports per-target thresholds
+- **SSL cert expiry** (`monitor/ssl_check.py`) — cert parsing, days-to-expiry, self-signed detection, diagnose hook
+- **SMART disk health** (`monitor/smart_check.py`) — ReallocatedSectors/PendingSectors/CriticalWarning, wraps `smartctl -A -H`, falls back to `smartctl -a`
+- **Kernel Oops/MCE/segfault** (`monitor/kernel_errors.py`) — dmesg + journalctl scanning with 1h + 24h windows
+- **iostat I/O latency** (`monitor/iostat.py`) — per-device `r_await`/`w_await`/`util` via sysstat
+- **Process tracker** (`monitor/process_tracker.py`) — top-N by RSS, service restart counter from journalctl
+- **File descriptor monitor** (`monitor/fd_check.py`) — system-wide FD usage, per-process top-N, `/proc/sys/fs/file-nr`
+- **AIDE file integrity** (`monitor/aide_check.py`) — runs `aide --check`, parses summary + reports added/changed/removed
+
+### Added — Storage & Integration (Slices 2.0–5.0)
+- **SQLite TimeSeriesDB** (`storage/timeseries.py`) — 30-day retention, per-mount disk prefix queries, atomic batch writes
+- **Time-series pipeline integration** — every pipeline run writes defcon + system metrics to DB
+- **`/api/history/<metric>` endpoint** — query historical data for any metric, returns `[{ts, value}]`
+- **Predict wire** (`predict/integration.py`) — bridges TimeSeriesDB to predict layer, adds `predictions[]` to snapshot
+- **`/api/predictions` endpoint** — run predictions on demand, returns per-metric forecasts
+- **Notify deduplicator** (`notify/pipeline.py`) — fingerprint-based dedup with kind+message+host, critical bypasses dedup
+- **Evidence bundle** (`evidence/bundle.py`) — JSON snapshot + SHA-256 signature, no AWS dep, local-only
+- **`/api/evidence/export` endpoint** — on-demand bundle export, returns signed JSON
+
+### Added — Security & Docs (Slices 6.0–7.0)
+- **Security baseline** (`monitor/security_baseline.py`) — sshd_config drift detection, SUID binary scanner, listening ports baseline
+- **`/api/security` endpoint** — SSH/SUID/ports summary
+- **`MONITORING_COVERAGE.md`** — authoritative list of all 20 modules, gaps, extension guide, thresholds cheat sheet
+- **`repair_policy.yaml`** — defaults: auto for `drop_caches`/`log_truncate_journald`/`top_processes_snapshot`/`notify_human`, needs_approval for `service_restart`
+
+### Added — Production Hardening (Slice 8.0)
+- **bootstrap.sh** — added system deps: `smartmontools`, `sysstat`, `aide`, `python3-venv`, `python3-pip`
+- **pyproject.toml** — bumped to v0.4.0, added `[test]` extras (`pytest`, `freezegun`)
+- **Editable install with extras** — `pip install -e ".[test]"` for test deps
+
+### Tests
+- **469 → 531** (+62 new tests, 0 failing)
+- All new modules: 100% TDD (RED → GREEN → wire → commit)
+- 3 new endpoint test suites (history/predictions/evidence)
+- Sandbox-validated: clean clone → venv → `pip install -e ".[test]"` → 531 passed
+
+### Changed
+- Pipeline now writes to TimeSeriesDB on every run (auto-prune at 30 days)
+- Snapshot payload includes `predictions[]` and `evidence_bundle` (optional)
+- All 8 new collectors auto-invoke if their config is present
+- pyproject.toml `version` 0.3.0 → 0.4.0
+
 ## [0.3.0] — 2026-06-28 — Week 3 complete
 
 ### Added

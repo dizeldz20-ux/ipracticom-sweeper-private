@@ -50,18 +50,35 @@ require_root() {
 
 require_root
 
+# --- System dependencies (apt) ---
+log "Installing system dependencies via apt..."
+# smartmontools: SMART disk health (Slice 1.3)
+# sysstat:        iostat (Slice 1.5)
+# aide:           file integrity (Slice 1.8)
+# python3-venv:   venv support
+# python3-pip:    pip support
+apt-get update -qq 2>&1 | tail -1
+apt-get install -y -qq \
+    smartmontools \
+    sysstat \
+    aide \
+    python3-venv \
+    python3-pip \
+    2>&1 | tail -1 || warn "Some apt packages failed to install (will degrade gracefully)"
+ok "System dependencies installed"
+
 # --- Create state directories ---
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
 chmod 750 "${STATE_DIR}" "${LOG_DIR}"
 ok "State dirs ready: ${STATE_DIR}, ${LOG_DIR}"
 
 # --- Install package (editable from local repo) ---
-log "Installing package in editable mode..."
-if ! python3 -m pip install -e "${REPO_DIR}" 2>&1 | tail -3; then
+log "Installing package in editable mode (with [test] extras)..."
+if ! python3 -m pip install -e "${REPO_DIR}[test]" 2>&1 | tail -3; then
     err "pip install failed"
     exit 1
 fi
-ok "Package installed"
+ok "Package installed (v0.4.0 + test extras)"
 
 # --- Create default .env if missing ---
 if [[ ! -f "${REPO_DIR}/.env" ]]; then
