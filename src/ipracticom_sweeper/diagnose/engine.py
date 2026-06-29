@@ -362,6 +362,16 @@ DIAGNOSERS = {
 }
 
 
+def diagnose_http_wrapper(findings: dict, rules: dict) -> list[Problem]:
+    """Lazy import to avoid circular dependency at module load."""
+    from ipracticom_sweeper.diagnose.http_diagnose import diagnose_http
+    return diagnose_http(findings, rules)
+
+
+# Register lazy wrapper
+DIAGNOSERS["http"] = diagnose_http_wrapper
+
+
 def diagnose(findings: dict[str, Any], rules: dict[str, Any]) -> Diagnosis:
     """Run all diagnosers and produce a Diagnosis.
 

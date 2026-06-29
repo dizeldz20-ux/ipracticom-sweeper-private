@@ -12,7 +12,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, logs, memory, network, processes, security, services, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, logs, memory, network, processes, security, services, uptime, health
 
 logger = structlog.get_logger()
 
@@ -77,6 +77,15 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
     # Only audit AWS if data is available
     if aws_values.get("available"):
         audit.monitor_event("aws", aws_values, aws_status)
+
+    # HTTP endpoints (graceful if no endpoints configured)
+    http_endpoints = rules.get("http", {}).get("endpoints", [])
+    if http_endpoints:
+        http_results = http_check.collect_http_endpoints(http_endpoints)
+        http_values = {"endpoints": [r.to_dict() for r in http_results]}
+        http_status = http_check.evaluate(http_values, rules)
+        snapshot["modules"]["http"] = {"values": http_values, "status": http_status}
+        audit.monitor_event("http", http_values, http_status)
 
     # Uptime / boot time
     up_values = uptime.collect()
