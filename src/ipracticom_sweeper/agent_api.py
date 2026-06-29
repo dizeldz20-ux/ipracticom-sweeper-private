@@ -57,6 +57,45 @@ from ipracticom_sweeper.slack_actions.endpoint import SlackEndpoint
 from ipracticom_sweeper.slack_actions.commands import SlackCommandHandler
 
 
+def _read_heartbeat(state_dir) -> dict[str, Any] | None:
+    """Read /heartbeat.json if it exists, else return None.
+
+    Heartbeat is written by the pipeline loop after every sweep — it's
+    the cheapest way to know "is this host alive" without running the
+    whole pipeline again.
+    """
+    import json as _json
+    path = state_dir / "heartbeat.json"
+    if not path.exists():
+        return None
+    try:
+        return _json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def _local_status(heartbeat: dict[str, Any] | None) -> str:
+    """Classify the local host's status from its heartbeat.
+
+    Rules:
+      - no heartbeat / very old heartbeat → "unknown" or "stale"
+      - defcon <= 3 → "warn" / "crit"
+      - problems_found > 0 → "warn"
+      - else → "ok"
+    """
+    if heartbeat is None:
+        return "unknown"
+    try:
+        defcon = int(heartbeat.get("defcon", 5))
+    except (TypeError, ValueError):
+        defcon = 5
+    if defcon <= 2:
+        return "crit"
+    if defcon == 3 or int(heartbeat.get("problems_found") or 0) > 0:
+        return "warn"
+    return "ok"
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     token = os.environ.get("AGENT_API_TOKEN", "")
@@ -318,6 +357,295 @@ def create_app() -> Flask:
             })
         finally:
             db.close()
+
+    # History catalog (v0.4.2) — list distinct metrics + hosts + per-metric counts.
+    @app.route("/api/history", methods=["GET"])
+    @require_auth
+    def api_history_catalog():
+        """Return the catalog of available time-series.
+
+        Returns:
+          metrics: sorted list of distinct metric names
+          hosts:   sorted list of distinct host ids
+          metrics_with_counts: [{metric, count, last_value, last_ts}] per metric
+          hosts_with_counts:   [{host, count}] per host
+          note: present if the metrics.db is missing
+        """
+        import sqlite3
+        from pathlib import Path
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+        db_path = state_dir / "metrics.db"
+        if not db_path.exists():
+            return jsonify({
+                "metrics": [],
+                "hosts": [],
+                "metrics_with_counts": [],
+                "hosts_with_counts": [],
+                "note": "no data yet (db file missing)",
+            })
+
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.row_factory = sqlite3.Row
+                # Sanity check the schema — if the table isn't there yet,
+                # surface a clean empty response instead of 500.
+                tables = {
+                    r[0] for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                if "samples" not in tables:
+                    return jsonify({
+                        "metrics": [],
+                        "hosts": [],
+                        "metrics_with_counts": [],
+                        "hosts_with_counts": [],
+                        "note": "no data yet (samples table missing)",
+                    })
+
+                metrics = sorted({
+                    r[0] for r in conn.execute(
+                        "SELECT DISTINCT metric FROM samples"
+                    )
+                })
+                hosts = sorted({
+                    r[0] for r in conn.execute(
+                        "SELECT DISTINCT host FROM samples"
+                    )
+                })
+                metrics_with_counts = [
+                    dict(r) for r in conn.execute(
+                        """
+                        SELECT metric,
+                               COUNT(*) AS count,
+                               (SELECT value FROM samples s2
+                                  WHERE s2.metric = s1.metric
+                                  ORDER BY ts DESC LIMIT 1) AS last_value,
+                               MAX(ts) AS last_ts
+                          FROM samples s1
+                         GROUP BY metric
+                         ORDER BY metric
+                        """
+                    )
+                ]
+                hosts_with_counts = [
+                    dict(r) for r in conn.execute(
+                        """
+                        SELECT host, COUNT(*) AS count, MAX(ts) AS last_ts
+                          FROM samples
+                         GROUP BY host
+                         ORDER BY host
+                        """
+                    )
+                ]
+            finally:
+                conn.close()
+        except sqlite3.DatabaseError as e:
+            return jsonify({
+                "metrics": [],
+                "hosts": [],
+                "metrics_with_counts": [],
+                "hosts_with_counts": [],
+                "error": f"db error: {e}",
+            }), 500
+
+        return jsonify({
+            "metrics": metrics,
+            "hosts": hosts,
+            "metrics_with_counts": metrics_with_counts,
+            "hosts_with_counts": hosts_with_counts,
+        })
+
+    # Approvals (v0.4.2) — list pending repair proposals, approve, reject.
+    @app.route("/api/approvals", methods=["GET"])
+    @require_auth
+    def api_approvals_list():
+        """List all repair proposals awaiting operator decision."""
+        from ipracticom_sweeper.repair.pending import list_pending
+
+        pending = list_pending()
+        return jsonify({
+            "count": len(pending),
+            "pending": [p.to_dict() for p in pending],
+        })
+
+    @app.route("/api/approvals/<pid>/approve", methods=["POST"])
+    @require_auth
+    def api_approvals_approve(pid):
+        """Approve a pending proposal: execute the repair, archive as approved."""
+        from ipracticom_sweeper.repair import pending as pending_mod
+        from ipracticom_sweeper.repair import actions as actions_mod
+
+        proposal = pending_mod.get_proposal(pid)
+        if proposal is None or proposal.status != "pending":
+            # We refuse to re-execute a proposal that's already been decided.
+            # Check existence so we can return 404 vs 409 cleanly.
+            if proposal is None:
+                return jsonify({"error": "not_found"}), 404
+            return jsonify({
+                "error": "already_decided",
+                "status": proposal.status,
+            }), 409
+
+        # Execute the repair. execute_repair returns RepairResult; we
+        # log + archive regardless of success/failure so the operator
+        # has an audit trail.
+        try:
+            result = actions_mod.execute_repair(
+                proposal.action, **proposal.kwargs
+            )
+            result_dict = {
+                "action": result.action,
+                "target": result.target,
+                "success": result.success,
+                "message": result.message,
+                "error": result.error,
+                "rollback_available": result.rollback_available,
+            }
+            new_status = "executed" if result.success else "failed"
+        except Exception as e:
+            result_dict = {"action": proposal.action, "success": False, "error": str(e)}
+            new_status = "failed"
+
+        pending_mod.set_status(pid, new_status)
+        pending_mod.archive(pid, "approved")
+        pending_mod.log_audit({
+            "kind": "repair_executed",
+            "proposal_id": pid,
+            "action": proposal.action,
+            "kwargs": proposal.kwargs,
+            "proposed_command": proposal.proposed_command,
+            "status": new_status,
+            "result": result_dict,
+        })
+        return jsonify({
+            "ok": result_dict.get("success", False),
+            "status": new_status,
+            "result": result_dict,
+        })
+
+    @app.route("/api/approvals/<pid>/reject", methods=["POST"])
+    @require_auth
+    def api_approvals_reject(pid):
+        """Reject a pending proposal: archive as rejected (no execution)."""
+        from ipracticom_sweeper.repair import pending as pending_mod
+
+        proposal = pending_mod.get_proposal(pid)
+        if proposal is None:
+            return jsonify({"error": "not_found"}), 404
+        if proposal.status != "pending":
+            return jsonify({
+                "error": "already_decided",
+                "status": proposal.status,
+            }), 409
+
+        pending_mod.set_status(pid, "rejected")
+        pending_mod.archive(pid, "rejected")
+        pending_mod.log_audit({
+            "kind": "repair_rejected",
+            "proposal_id": pid,
+            "action": proposal.action,
+            "kwargs": proposal.kwargs,
+            "reason": proposal.reason,
+        })
+        return jsonify({"ok": True, "status": "rejected"})
+
+    # Fleet (v0.4.2) — local host + every configured SSM connector.
+    @app.route("/api/fleet", methods=["GET"])
+    @require_auth
+    def api_fleet_list():
+        """Aggregate the local host + all enabled connectors into one view."""
+        from ipracticom_sweeper.config import load_connectors
+        from pathlib import Path
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+        local_heartbeat = _read_heartbeat(state_dir)
+
+        hosts: list[dict[str, Any]] = []
+        # The local host is always present.
+        local_entry: dict[str, Any] = {
+            "name": "local",
+            "kind": "local",
+            "status": _local_status(local_heartbeat),
+        }
+        if local_heartbeat:
+            local_entry.update({
+                "last_seen": local_heartbeat.get("ts_iso"),
+                "defcon": local_heartbeat.get("defcon"),
+                "problems_found": local_heartbeat.get("problems_found"),
+            })
+        hosts.append(local_entry)
+
+        for c in load_connectors():
+            last_err = c.last_error
+            status = "error" if last_err else ("ok" if c.last_collected_at else "unknown")
+            hosts.append({
+                "name": c.name,
+                "kind": "connector",
+                "instance_id": c.instance_id,
+                "region": c.region,
+                "enabled": c.enabled,
+                "tags": c.tags,
+                "status": status,
+                "last_collected_at": c.last_collected_at,
+                "last_error": last_err,
+            })
+
+        return jsonify({
+            "count": len(hosts),
+            "hosts": hosts,
+        })
+
+    @app.route("/api/fleet/<host>", methods=["GET"])
+    @require_auth
+    def api_fleet_host(host):
+        """Per-host details — local reads heartbeat; connectors read config + state."""
+        from ipracticom_sweeper.config import get_connector, load_connectors
+        from pathlib import Path
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+
+        if host == "local":
+            hb = _read_heartbeat(state_dir)
+            if hb is None:
+                return jsonify({"error": "no heartbeat yet"}), 404
+            return jsonify({
+                "name": "local",
+                "kind": "local",
+                "status": _local_status(hb),
+                "defcon": hb.get("defcon"),
+                "problems_found": hb.get("problems_found"),
+                "repairs_attempted": hb.get("repairs_attempted"),
+                "last_seen": hb.get("ts_iso"),
+                "last_seen_ts": hb.get("ts"),
+                "extra": hb.get("extra") or {},
+            })
+
+        c = get_connector(host)
+        if c is None:
+            return jsonify({"error": "not_found"}), 404
+        last_err = c.last_error
+        status = "error" if last_err else ("ok" if c.last_collected_at else "unknown")
+        return jsonify({
+            "name": c.name,
+            "kind": "connector",
+            "instance_id": c.instance_id,
+            "region": c.region,
+            "enabled": c.enabled,
+            "tags": c.tags,
+            "status": status,
+            "last_collected_at": c.last_collected_at,
+            "last_error": last_err,
+            "created_at": c.created_at,
+        })
 
     # Predictions endpoint — read time-series, return threshold crossings
     @app.route("/api/predictions", methods=["GET"])

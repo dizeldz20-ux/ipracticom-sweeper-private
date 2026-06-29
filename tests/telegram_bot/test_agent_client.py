@@ -92,8 +92,8 @@ async def test_get_snapshot_500_raises():
 
 
 @pytest.mark.asyncio
-async def test_get_history_returns_list():
-    """get_history returns the parsed list of samples."""
+async def test_get_history_returns_envelope():
+    """get_history returns the v0.4.2 envelope with samples inside."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[{"ts": 1, "value": 0.5}, {"ts": 2, "value": 0.6}])
@@ -102,7 +102,10 @@ async def test_get_history_returns_list():
     async with httpx.AsyncClient(transport=transport) as http:
         client = AgentClient(base_url="http://agent", token="t", http_client=http)
         result = await client.get_history("defcon", hours=24)
-    assert result == [{"ts": 1, "value": 0.5}, {"ts": 2, "value": 0.6}]
+    # v0.4.2 client wraps a bare list in an envelope for backwards-compat.
+    assert result["metric"] == "defcon"
+    assert result["samples"] == [{"ts": 1, "value": 0.5}, {"ts": 2, "value": 0.6}]
+    assert result["count"] == 2
 
 
 @pytest.mark.asyncio
