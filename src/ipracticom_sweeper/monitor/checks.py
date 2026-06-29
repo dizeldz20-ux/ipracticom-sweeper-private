@@ -13,7 +13,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, iostat, kernel_errors, logs, memory, network, processes, security, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -122,6 +122,20 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
             io_status = iostat.evaluate(io_values, rules)
             snapshot["modules"]["iostat"] = {"values": io_values, "status": io_status}
             audit.monitor_event("iostat", io_values, io_status)
+
+    # Process tracker: top-N resource hogs + service restart counter
+    pt_window = rules.get("process_tracker", {}).get("window_minutes", 60)
+    pt_top_n = rules.get("process_tracker", {}).get("top_n", 10)
+    pt_top = process_tracker.get_top_processes(top_n=pt_top_n)
+    pt_restarts = process_tracker.collect_service_restarts(window_minutes=pt_window)
+    pt_values = {
+        "top_processes": [p.to_dict() for p in pt_top],
+        "service_restarts": [r.to_dict() for r in pt_restarts],
+        "window_minutes": pt_window,
+    }
+    pt_status = process_tracker.evaluate(pt_values, rules)
+    snapshot["modules"]["process_tracker"] = {"values": pt_values, "status": pt_status}
+    audit.monitor_event("process_tracker", pt_values, pt_status)
 
     # Uptime / boot time
     up_values = uptime.collect()

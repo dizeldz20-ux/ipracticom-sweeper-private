@@ -71,3 +71,11 @@ iostat:
   await_crit_ms: 200
   util_warn_percent: 80
   util_crit_percent: 95
+
+process_tracker:
+  window_minutes: 60
+  top_n: 10
+  cpu_warn_percent: 80
+  cpu_crit_percent: 95
+  restart_warn: 3
+  restart_crit: 10
