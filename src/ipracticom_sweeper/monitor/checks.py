@@ -12,7 +12,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, logs, memory, network, processes, security, services, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aws, cpu, disk, http_check, logs, memory, network, processes, security, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -95,6 +95,16 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
         ssl_status = ssl_check.evaluate(ssl_values, rules)
         snapshot["modules"]["ssl"] = {"values": ssl_values, "status": ssl_status}
         audit.monitor_event("ssl", ssl_values, ssl_status)
+
+    # SMART disk health (graceful if smartctl missing or no devices)
+    smart_devices = rules.get("smart", {}).get("devices", [])
+    if smart_devices:
+        smart_results = smart_check.collect_smart_health(smart_devices)
+        if smart_results:
+            smart_values = {"disks": [r.to_dict() for r in smart_results]}
+            smart_status = smart_check.evaluate(smart_values, rules)
+            snapshot["modules"]["smart"] = {"values": smart_values, "status": smart_status}
+            audit.monitor_event("smart", smart_values, smart_status)
 
     # Uptime / boot time
     up_values = uptime.collect()

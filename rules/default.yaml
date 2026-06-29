@@ -56,3 +56,9 @@ ssl:
   warn_days: 30
   crit_days: 7
   hosts: []
+
+smart:
+  reallocated_warn: 1
+  reallocated_crit: 100
+  temp_warn_c: 55
+  devices: []
