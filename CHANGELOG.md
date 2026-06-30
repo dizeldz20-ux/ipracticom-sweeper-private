@@ -2,6 +2,25 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.4] — 2026-06-30 — Real local metrics (psutil) + seed connector cleanup
+
+### Added
+- **`collect_local_metrics()` in `monitor/health.py`** — uses `psutil` to snapshot CPU%, cores, memory (percent + used_mb + total_mb), disk (percent + used_gb + total_gb), network (bytes_sent + bytes_recv), uptime_seconds, and booted_at. Returns a graceful error dict if psutil fails (sandbox / permission issues) instead of crashing the pipeline.
+- **`record_run()` now auto-attaches the local metrics snapshot to `heartbeat.extra`** when no `extra` is passed in. The next pipeline run will populate the field without any caller change.
+- **`psutil>=5.9.0`** added to `pyproject.toml` runtime dependencies.
+- **`tests/test_local_metrics.py`** — 9 new tests covering collector shape, graceful failure, `record_run` integration, and `/api/fleet/local` exposure of the metrics block.
+
+### Fixed
+- **`/api/fleet/local` was returning `extra: {}`**: the v0.4.3 endpoint already forwarded `extra` from the heartbeat, but the heartbeat itself never contained the snapshot. With v0.4.4, every pipeline run writes the psutil snapshot into `extra`, so the endpoint surfaces real CPU/memory/disk/network/uptime numbers.
+- **v0.4.3 CHANGELOG claimed "Fleet host detail now shows live CPU/..."** — that promise was only partially wired (the forwarding existed, the data didn't). v0.4.4 closes the gap.
+
+### Changed
+- **`/var/lib/ipracticom-sweeper/connectors.yaml`** — seed connectors (`prod-web-1`, `prod-db-1`, `staging-web-1`) replaced with `connectors: []`. They were placeholder data with `Unable to locate credentials` errors that confused operators on first launch. Add real SSM connectors via the 🔌 Connectors menu in the bot.
+- **`pyproject.toml`** → 0.4.4
+
+### Tests
+- **714/714 passing** (+9 from v0.4.3).
+
 ## [0.4.3] — 2026-06-30 — Bot Polish + Logs
 
 ### Changed (per user feedback 2026-06-29)

@@ -22,6 +22,57 @@ from pathlib import Path
 from typing import Any
 
 
+def collect_local_metrics() -> dict[str, Any]:
+    """Snapshot the local host's resource usage via psutil.
+
+    Returns a dict suitable for storing under heartbeat["extra"]. If psutil
+    raises (e.g. permission error in a sandbox), returns a dict with an
+    "error" key instead of crashing the pipeline.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return {"error": "psutil not installed"}
+
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        cpu_count = psutil.cpu_count(logical=True) or 1
+        vm = psutil.virtual_memory()
+        du = psutil.disk_usage("/")
+        net = psutil.net_io_counters()
+        boot_ts = psutil.boot_time()
+        now_ts = time.time()
+        uptime_seconds = max(0.0, now_ts - boot_ts)
+
+        from datetime import datetime, timezone
+        booted_iso = datetime.fromtimestamp(boot_ts, tz=timezone.utc).isoformat()
+
+        return {
+            "cpu": {
+                "percent": float(cpu_percent),
+                "cores": int(cpu_count),
+            },
+            "memory": {
+                "percent": float(vm.percent),
+                "used_mb": round(vm.used / (1024 * 1024), 1),
+                "total_mb": round(vm.total / (1024 * 1024), 1),
+            },
+            "disk": {
+                "percent": float(du.percent),
+                "used_gb": round(du.used / (1024 ** 3), 1),
+                "total_gb": round(du.total / (1024 ** 3), 1),
+            },
+            "network": {
+                "bytes_sent": int(net.bytes_sent),
+                "bytes_recv": int(net.bytes_recv),
+            },
+            "uptime_seconds": float(uptime_seconds),
+            "booted_at": booted_iso,
+        }
+    except Exception as e:
+        return {"error": f"psutil collection failed: {e}"}
+
+
 # Standard system path; we fall back to user-local if we can't write there.
 SYSTEM_HEARTBEAT_DIR = Path("/var/lib/ipracticom-sweeper")
 SYSTEM_HEARTBEAT_FILE = SYSTEM_HEARTBEAT_DIR / "heartbeat.json"
@@ -80,13 +131,16 @@ def record_run(
     Returns the path the heartbeat was written to.
     """
     path = _heartbeat_path()
+    # If the caller didn't pass extra, auto-collect local psutil metrics.
+    if extra is None:
+        extra = collect_local_metrics()
     record = {
         "ts": time.time(),
         "ts_iso": _iso_now(),
         "defcon": defcon,
         "problems_found": problems_found,
         "repairs_attempted": repairs_attempted,
-        "extra": extra or {},
+        "extra": extra,
     }
     path.write_text(json.dumps(record, indent=2))
     return path
