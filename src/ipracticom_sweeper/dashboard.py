@@ -1096,6 +1096,66 @@ def settings_connectors():
     )
 
 
+# --- Catalogue (read-only check registry) ---------------------------------
+
+
+@app.route("/catalogue")
+def catalogue_view():
+    """Catalogue index — list of registered checks (v0.5.0 slice 1.2).
+
+    Additive route. Shows every check we know about, with current threshold
+    param counts loaded from rules.yaml. Read-only — operators inspect what
+    exists; editing the live file is a future slice.
+    """
+    from ipracticom_sweeper.catalogue import render_catalogue
+    from ipracticom_sweeper.config import load_rules
+
+    try:
+        rules = load_rules() or {}
+    except Exception:
+        rules = {}
+
+    checks = render_catalogue(rules)
+
+    return render_template(
+        "catalogue.html",
+        mode="index",
+        checks=checks,
+        identity=_fetch_identity(),
+    )
+
+
+@app.route("/catalogue/<module_key>")
+def catalogue_module(module_key: str):
+    """Per-check editor view (v0.5.0 slice 1.2).
+
+    Additive route. Shows the rule_keys defined for a module and their current
+    values from rules.yaml. Read-only — changing values requires a separate
+    write/approval flow.
+    """
+    from ipracticom_sweeper.catalogue import render_check
+    from ipracticom_sweeper.config import load_rules
+
+    try:
+        rules = load_rules() or {}
+    except Exception:
+        rules = {}
+
+    data = render_check(module_key, rules)
+    if data is None:
+        return jsonify({"error": "unknown_module", "key": module_key}), 404
+
+    return render_template(
+        "catalogue.html",
+        mode="module",
+        module_key=module_key,
+        entry=data["entry"],
+        params=data["params"],
+        all_current=data["all_current"],
+        identity=_fetch_identity(),
+    )
+
+
 # --- Inspector (per-host check inspection) ---------------------------------
 
 

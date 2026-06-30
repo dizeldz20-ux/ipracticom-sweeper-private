@@ -25,6 +25,7 @@
       <a href="{{ url_for('settings_connectors') }}" {% if request.endpoint == 'settings_connectors' %}class="active"{% endif %}>מחברים</a>
       <a href="{{ url_for('fleet_view') }}" {% if request.endpoint in ('fleet_view', 'fleet_host_detail') %}class="active"{% endif %}>צי</a>
       <a href="{{ url_for('inspector_view') }}" {% if request.endpoint in ('inspector_view', 'inspector_host') %}class="active"{% endif %}>מפקח בדיקות</a>
+      <a href="{{ url_for('catalogue_view') }}" {% if request.endpoint in ('catalogue_view', 'catalogue_module') %}class="active"{% endif %}>קטלוג</a>
     </nav>
   </div>
 </header>
