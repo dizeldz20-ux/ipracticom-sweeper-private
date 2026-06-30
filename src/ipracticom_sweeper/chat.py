@@ -3,8 +3,9 @@
 Infrastructure-only:
   - WebSocket endpoint at /ws for bidirectional conversation
   - Session list + per-session message history
-  - Echo acknowledgement (no LLM; integration arrives in slice 3.3)
-  - In-memory store (replaced by langchain/pgvector in 3.2)
+  - Echo acknowledgement with optional RAG context (slice 3.2)
+  - In-memory store + stdlib RAG (BM25 + TF-IDF cosine) wired in slice 3.2;
+    langchain/pgvector remains a future option if multi-host scale demands it.
 
 All identifiers use ULID for sortability; messages persisted in-memory until 3.2.
 
@@ -12,6 +13,7 @@ Public surface:
     register_chat_routes(app)  -- attach /chat + /ws to a Flask app
     ChatStore                  -- global in-memory store
     ChatMessage, ChatSession   -- pydantic-friendly dataclasses (stdlib only)
+    RAGStore                   -- global retrieval index over docs/
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ except Exception:  # pragma: no cover -- document optional dep
 
 # Module-level store; survives across requests in same process.
 _STORE: "ChatStore | None" = None
+_RAG: "RAGStore | None" = None
 
 
 def get_store() -> "ChatStore":
@@ -40,6 +43,107 @@ def get_store() -> "ChatStore":
     if _STORE is None:
         _STORE = ChatStore()
     return _STORE
+
+
+class RAGStore:
+    """Lazy-initialized wrapper around HybridIndex.
+
+    Indexes the sweeper's `docs/` directory (relative to the package root)
+    on first use. The corpus is small (~10 markdown files) so reindexing
+    on each access is wasteful; we cache the HybridIndex after first build
+    and expose a `reload()` method for tests / explicit refresh.
+    """
+
+    def __init__(self, docs_dir: str | None = None) -> None:
+        self._docs_dir = docs_dir  # None = default to package's docs/ sibling
+        self._index = None  # type: ignore[var-annotated]
+
+    def _resolve_docs_dir(self) -> str | None:
+        if self._docs_dir:
+            return self._docs_dir
+        # default: <package>/../../docs (project root docs/)
+        try:
+            here = Path(__file__).resolve().parent
+            candidate = here.parent.parent / "docs"
+            if candidate.is_dir():
+                return str(candidate)
+        except Exception:
+            pass
+        return None
+
+    def reload(self) -> int:
+        """Force a fresh index build. Returns the doc count.
+
+        A missing or empty docs dir yields 0 (not an exception) so
+        that production deploys without docs/ still boot the chat UI
+        cleanly — the assistant will simply have no RAG context to
+        surface until docs/ is populated.
+        """
+        from ipracticom_sweeper.chat_rag import load_docs_from_dir
+        d = self._resolve_docs_dir()
+        if not d:
+            self._index = None
+            return 0
+        try:
+            self._index = load_docs_from_dir(d)
+        except FileNotFoundError:
+            self._index = None
+            return 0
+        return self._index.doc_count
+
+    def get(self):
+        """Lazy accessor returning the underlying HybridIndex (or None)."""
+        if self._index is None:
+            try:
+                self.reload()
+            except Exception:
+                self._index = None
+        return self._index
+
+    def query(self, question: str, top_k: int = 2):
+        idx = self.get()
+        if idx is None:
+            return []
+        return idx.query(question, top_k=top_k)
+
+
+def get_rag() -> "RAGStore":
+    """Lazy-singleton accessor for the global RAG store."""
+    global _RAG
+    if _RAG is None:
+        _RAG = RAGStore()
+    return _RAG
+
+
+def _compose_assistant_reply(content: str,
+                             rag_top_k: int = 2,
+                             max_chars: int = 600) -> str:
+    """Build the assistant acknowledgement for slice 3.2 (RAG-augmented stub).
+
+    The real LLM reply will replace this in slice 3.3; for now we surface
+    the top retrieval hits so the UI proves the wiring works end-to-end.
+    """
+    rag = get_rag()
+    hits = rag.query(content, top_k=rag_top_k)
+    base = f"(תשובת סטאב — slice 3.3 יוסיף LLM) קיבלתי: {content[:120]}"
+    if not hits:
+        return base
+    snippet_lines = []
+    used = len(base)
+    for h in hits:
+        snippet = h.text.strip().replace("\n", " ")
+        if len(snippet) > 200:
+            snippet = snippet[:197] + "..."
+        line = f"• {h.doc_id}: {snippet}"
+        if used + len(line) + 1 > max_chars:
+            remaining = max_chars - used
+            if remaining <= 0:
+                break
+            snippet_lines.append(line[:max(0, remaining - 3)] + "...")
+            break
+        snippet_lines.append(line)
+        used += len(line) + 1
+    return base + "\n[RAG]\n" + "\n".join(snippet_lines)
 
 
 def _now_ms() -> int:
@@ -194,7 +298,7 @@ def register_chat_routes(app: Any) -> None:
         # Echo assistant acknowledgement (LLM wired in slice 3.3).
         ack = get_store().append(
             session_id, "assistant",
-            f"(תשובת סטאב — slice 3.3 יוסיף LLM) קיבלתי: {content[:120]}"
+            _compose_assistant_reply(content)
         )
         return jsonify({"user": msg.as_dict(), "assistant": ack.as_dict() if ack else None})
 
@@ -231,11 +335,12 @@ def register_chat_routes(app: Any) -> None:
                     continue
                 ack_msg = store.append(
                     sid, "assistant",
-                    f"(תשובת סטאב) קיבלתי: {content[:120]}"
+                    _compose_assistant_reply(content)
                 )
                 ws.send(json.dumps(
                     {"user": user_msg.as_dict(),
-                     "assistant": ack_msg.as_dict() if ack_msg else None},
+                     "assistant": ack_msg.as_dict() if ack_msg else None,
+                     "rag_hits": [h.as_dict() for h in get_rag().query(content, top_k=2)]},
                     ensure_ascii=False,
                 ))
         except Exception as exc:  # pragma: no cover -- runtime WS errors
@@ -251,6 +356,8 @@ __all__ = [
     "ChatMessage",
     "ChatSession",
     "ChatStore",
+    "RAGStore",
+    "get_rag",
     "get_store",
     "register_chat_routes",
 ]
