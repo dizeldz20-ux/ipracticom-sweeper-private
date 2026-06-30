@@ -228,6 +228,21 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
             "status": "warn",
         }
 
+    # FreeSWITCH Tier 4 (FS-16..25) — v0.5.0 slice 2.4 (edge cases)
+    try:
+        fs_edge_values = freeswitch.collect_edge_cases()
+        fs_edge_status = freeswitch.evaluate_edge_cases(fs_edge_values, rules)
+        snapshot["modules"]["freeswitch_edge"] = {
+            "values": fs_edge_values,
+            "status": fs_edge_status,
+        }
+        audit.monitor_event("freeswitch_edge", fs_edge_values, fs_edge_status)
+    except Exception as e:
+        snapshot["modules"]["freeswitch_edge"] = {
+            "values": {"error": str(e)},
+            "status": "warn",
+        }
+
     # Compute overall status (worst wins)
     rank = {"ok": 0, "warn": 1, "crit": 2}
     worst = "ok"

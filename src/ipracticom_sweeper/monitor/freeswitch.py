@@ -47,6 +47,18 @@ DEFAULT_CONFIG_DRIFT_DAYS_CRIT = 180   # FS-14
 DEFAULT_BASELINE_DRIFT_FACTOR_WARN = 2.0  # FS-15: 2× baseline = warn
 DEFAULT_BASELINE_DRIFT_FACTOR_CRIT = 4.0  # FS-15: 4× baseline = crit
 
+# Tier-4 (slice 2.4) thresholds
+DEFAULT_CDR_BACKUP_MAX_AGE_HOURS = 26   # FS-16: warn if no fresh backup
+DEFAULT_RECORDINGS_MAX_AGE_DAYS = 90    # FS-17
+DEFAULT_FS_RSS_WARN_BYTES = 2 * 1024 ** 3      # FS-21: 2 GB
+DEFAULT_FS_RSS_CRIT_BYTES = 4 * 1024 ** 3      # FS-21: 4 GB
+DEFAULT_FS_CPU_PCT_WARN = 50                  # FS-22
+DEFAULT_FS_CPU_PCT_CRIT = 80                  # FS-22
+DEFAULT_TCP_RETRANS_WARN_PER_100 = 1.0   # FS-23: 1% retransmit
+DEFAULT_TCP_RETRANSMIT_CRIT_PER_100 = 5.0
+DEFAULT_FS_LOG_ERRORS_PER_MIN_WARN = 5    # FS-24
+DEFAULT_FS_LOG_ERRORS_PER_MIN_CRIT = 50
+
 
 # --- Low-level helpers ------------------------------------------------------
 
@@ -852,6 +864,604 @@ def evaluate_operational(values: dict[str, Any], rules: dict | None = None) -> s
         values.get("fs13_status", "warn"),
         values.get("fs14_status", "warn"),
         values.get("fs15_status", "warn"),
+    ]
+    order = {"ok": 0, "warn": 1, "crit": 2}
+    worst = max(statuses, key=lambda s: order.get(s, 1))
+    return worst
+
+
+# --- FS-16..25 edge cases (Sprint 2 slice 2.4) ---------------------------
+
+
+def _file_age_hours(path: str) -> float | None:
+    """Return age in hours of the file at `path`, or None on error."""
+    try:
+        mtime = os.path.getmtime(path)
+    except (FileNotFoundError, OSError):
+        return None
+    return (time.time() - mtime) / 3600.0
+
+
+def _read_text(path: str) -> str | None:
+    """Read a file as text, return None on any error."""
+    try:
+        with open(path) as f:
+            return f.read()
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def check_fs16_cdr_backup_fresh(
+    backup_glob_pattern: str = "/var/backups/freeswitch/cdr-*.sql*",
+    max_age_hours: float = DEFAULT_CDR_BACKUP_MAX_AGE_HOURS,
+) -> dict[str, Any]:
+    """FS-16: most recent CDR backup is fresh (under max_age_hours).
+
+    Without `glob` we rely on os.listdir() of the parent directory, since
+    importing `glob` inside a hot code path is wasteful and `pathlib` is
+    already implicitly loaded.
+    """
+    import glob as _glob
+    files = sorted(_glob.glob(backup_glob_pattern), key=os.path.getmtime,
+                   reverse=True) if backup_glob_pattern else []
+    if not files:
+        return {
+            "status": "warn",
+            "values": {
+                "fs16_pattern": backup_glob_pattern,
+                "fs16_latest_backup": None,
+                "fs16_age_hours": None,
+                "fs16_max_age_hours": max_age_hours,
+                "fs16_reason": "no backup files matched",
+            },
+        }
+    latest = files[0]
+    age = _file_age_hours(latest)
+    if age is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs16_pattern": backup_glob_pattern,
+                "fs16_latest_backup": latest,
+                "fs16_age_hours": None,
+                "fs16_max_age_hours": max_age_hours,
+                "fs16_reason": "cannot stat latest backup",
+            },
+        }
+    ok = age <= max_age_hours
+    return {
+        "status": "ok" if ok else "crit",
+        "values": {
+            "fs16_pattern": backup_glob_pattern,
+            "fs16_latest_backup": latest,
+            "fs16_age_hours": round(age, 1),
+            "fs16_max_age_hours": max_age_hours,
+        },
+    }
+
+
+def check_fs17_recordings_age(
+    recordings_dir: str = "/var/lib/freeswitch/recordings",
+    max_age_days: int = DEFAULT_RECORDINGS_MAX_AGE_DAYS,
+) -> dict[str, Any]:
+    """FS-17: oldest recording exceeds max_age_days → storage creeping.
+
+    We sample the 100 newest recordings and report the oldest among them.
+    If the tree is empty, we report ok (nothing to age out).
+    """
+    if not os.path.isdir(recordings_dir):
+        return {
+            "status": "warn",
+            "values": {
+                "fs17_path": recordings_dir,
+                "fs17_oldest_newest_sample_days": None,
+                "fs17_max_age_days": max_age_days,
+                "fs17_reason": "directory not found",
+            },
+        }
+    try:
+        samples = []
+        cutoff = time.time() - max_age_days * 86400
+        for root, _, files in os.walk(recordings_dir):
+            for name in files[:50]:  # cap to keep this fast on huge trees
+                full = os.path.join(root, name)
+                try:
+                    mtime = os.path.getmtime(full)
+                except OSError:
+                    continue
+                samples.append(mtime)
+                if len(samples) >= 100:
+                    break
+            if len(samples) >= 100:
+                break
+    except OSError:
+        return {
+            "status": "warn",
+            "values": {
+                "fs17_path": recordings_dir,
+                "fs17_oldest_newest_sample_days": None,
+                "fs17_max_age_days": max_age_days,
+                "fs17_reason": "os.walk failed",
+            },
+        }
+    if not samples:
+        return {
+            "status": "ok",
+            "values": {
+                "fs17_path": recordings_dir,
+                "fs17_oldest_newest_sample_days": None,
+                "fs17_max_age_days": max_age_days,
+                "fs17_reason": "no recordings",
+            },
+        }
+    oldest_in_sample = min(samples)
+    age_days = (time.time() - oldest_in_sample) / 86400.0
+    ok = age_days <= max_age_days
+    return {
+        "status": "warn" if not ok else "ok",
+        "values": {
+            "fs17_path": recordings_dir,
+            "fs17_oldest_newest_sample_days": round(age_days, 1),
+            "fs17_max_age_days": max_age_days,
+        },
+    }
+
+
+def check_fs18_sofia_packet_loss() -> dict[str, Any]:
+    """FS-18: any non-zero `packet loss` line in `sofia status profile`.
+
+    Looks for the literal phrase; if found, status=warn (degraded media).
+    """
+    res = _run_fscli("sofia status profile")
+    if res["rc"] != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs18_cli_rc": res["rc"],
+                "fs18_packet_loss_detected": None,
+                "fs18_reason": "cli failed",
+            },
+        }
+    out = res["stdout"].lower()
+    has_loss = "packet loss" in out and " 0 " not in out
+    return {
+        "status": "warn" if has_loss else "ok",
+        "values": {
+            "fs18_cli_rc": res["rc"],
+            "fs18_packet_loss_detected": has_loss,
+        },
+    }
+
+
+def check_fs19_sofia_jitter(jitter_warn_ms: int = 30, jitter_crit_ms: int = 100) -> dict[str, Any]:
+    """FS-19: `sofia status` reports non-trivial jitter.
+
+    We parse the line containing "jitter" and pull the largest integer.
+    """
+    res = _run_fscli("sofia status")
+    if res["rc"] != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs19_cli_rc": res["rc"],
+                "fs19_max_jitter_ms": None,
+                "fs19_warn_ms": jitter_warn_ms,
+                "fs19_crit_ms": jitter_crit_ms,
+                "fs19_reason": "cli failed",
+            },
+        }
+    max_jitter = 0
+    found = False
+    for line in res["stdout"].splitlines():
+        low = line.lower()
+        if "jitter" not in low:
+            continue
+        for tok in line.split():
+            tok = tok.strip("ms,()")
+            try:
+                val = float(tok)
+            except ValueError:
+                continue
+            if val > max_jitter:
+                max_jitter = val
+                found = True
+    if not found:
+        return {
+            "status": "ok",
+            "values": {
+                "fs19_cli_rc": res["rc"],
+                "fs19_max_jitter_ms": None,
+                "fs19_warn_ms": jitter_warn_ms,
+                "fs19_crit_ms": jitter_crit_ms,
+            },
+        }
+    if max_jitter >= jitter_crit_ms:
+        status = "crit"
+    elif max_jitter >= jitter_warn_ms:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs19_cli_rc": res["rc"],
+            "fs19_max_jitter_ms": max_jitter,
+            "fs19_warn_ms": jitter_warn_ms,
+            "fs19_crit_ms": jitter_crit_ms,
+        },
+    }
+
+
+def check_fs20_codec_mismatch() -> dict[str, Any]:
+    """FS-20: at least one configured codec is `NEGOTIATION` mismatch.
+
+    Looks at `sofia status profile internal` for the literal token
+    `NEGOTIATION` outside the header list.
+    """
+    res = _run_fscli("sofia status profile internal")
+    if res["rc"] != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs20_cli_rc": res["rc"],
+                "fs20_negotiation_count": None,
+                "fs20_reason": "cli failed",
+            },
+        }
+    count = res["stdout"].upper().count("NEGOTIATION")
+    if count == 0:
+        return {
+            "status": "ok",
+            "values": {
+                "fs20_cli_rc": res["rc"],
+                "fs20_negotiation_count": 0,
+            },
+        }
+    return {
+        "status": "warn",
+        "values": {
+            "fs20_cli_rc": res["rc"],
+            "fs20_negotiation_count": count,
+        },
+    }
+
+
+def check_fs21_process_rss(
+    warn_bytes: int = DEFAULT_FS_RSS_WARN_BYTES,
+    crit_bytes: int = DEFAULT_FS_RSS_CRIT_BYTES,
+) -> dict[str, Any]:
+    """FS-21: RSS of the `freeswitch` process.
+
+    Uses psutil when available (already a dependency of the project) and
+    falls back to a warn status with an explanation otherwise.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return {
+            "status": "warn",
+            "values": {
+                "fs21_rss_bytes": None,
+                "fs21_warn_bytes": warn_bytes,
+                "fs21_crit_bytes": crit_bytes,
+                "fs21_reason": "psutil not available",
+            },
+        }
+    candidates = []
+    for proc in psutil.process_iter(attrs=["name", "memory_info"]):
+        try:
+            name = proc.info.get("name") or ""
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if name != "freeswitch":
+            continue
+        mi = proc.info.get("memory_info")
+        if mi is not None:
+            candidates.append(mi.rss)
+    if not candidates:
+        return {
+            "status": "warn",
+            "values": {
+                "fs21_rss_bytes": None,
+                "fs21_warn_bytes": warn_bytes,
+                "fs21_crit_bytes": crit_bytes,
+                "fs21_reason": "no freeswitch process",
+            },
+        }
+    rss = max(candidates)
+    if rss >= crit_bytes:
+        status = "crit"
+    elif rss >= warn_bytes:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs21_rss_bytes": rss,
+            "fs21_warn_bytes": warn_bytes,
+            "fs21_crit_bytes": crit_bytes,
+        },
+    }
+
+
+def check_fs22_process_cpu_pct(
+    warn_pct: float = DEFAULT_FS_CPU_PCT_WARN,
+    crit_pct: float = DEFAULT_FS_CPU_PCT_CRIT,
+    sample_seconds: float = 0.0,
+) -> dict[str, Any]:
+    """FS-22: instantaneous CPU% of all `freeswitch` processes (aggregated).
+
+    Without a sample window we rely on psutil's cached value. Pass
+    sample_seconds=0.5 if you want a measured delta (slower).
+    """
+    try:
+        import psutil
+    except ImportError:
+        return {
+            "status": "warn",
+            "values": {
+                "fs22_cpu_pct": None,
+                "fs22_warn_pct": warn_pct,
+                "fs22_crit_pct": crit_pct,
+                "fs22_reason": "psutil not available",
+            },
+        }
+    total = 0.0
+    seen = 0
+    for proc in psutil.process_iter(attrs=["name"]):
+        try:
+            name = proc.info.get("name") or ""
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        if name != "freeswitch":
+            continue
+        try:
+            total += proc.cpu_percent(interval=sample_seconds)
+            seen += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if seen == 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs22_cpu_pct": None,
+                "fs22_warn_pct": warn_pct,
+                "fs22_crit_pct": crit_pct,
+                "fs22_reason": "no freeswitch process",
+            },
+        }
+    if total >= crit_pct:
+        status = "crit"
+    elif total >= warn_pct:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs22_cpu_pct": round(total, 1),
+            "fs22_warn_pct": warn_pct,
+            "fs22_crit_pct": crit_pct,
+        },
+    }
+
+
+def check_fs23_tcp_retransmit_pct(
+    warn_pct: float = DEFAULT_TCP_RETRANS_WARN_PER_100,
+    crit_pct: float = DEFAULT_TCP_RETRANSMIT_CRIT_PER_100,
+) -> dict[str, Any]:
+    """FS-23: TCP retransmit rate from `netstat -s`.
+
+    We look for the sections "Tcp:" and "TcpExt:" and parse "X segments
+    retransmitted" + "Y segments transmitted" to compute a percentage.
+    """
+    rc, out, _ = _run(["netstat", "-s"], timeout=5)
+    if rc != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs23_netstat_rc": rc,
+                "fs23_retransmit_pct": None,
+                "fs23_warn_pct": warn_pct,
+                "fs23_crit_pct": crit_pct,
+                "fs23_reason": "netstat failed",
+            },
+        }
+
+    segments_retrans = None
+    segments_in = None
+    segments_out = None
+    in_tcp_section = False
+    for line in out.splitlines():
+        if not line:
+            continue
+        low = line.lower()
+        if low.startswith("tcp:"):
+            in_tcp_section = True
+            continue
+        if in_tcp_section and not line[0].isspace():
+            # We've left the Tcp: section.
+            in_tcp_section = False
+        if not in_tcp_section:
+            continue
+        if "segments retransmitted" in low and segments_retrans is None:
+            segments_retrans = _parse_int_from_fscli(low)
+        elif "active connections established" in low and segments_out is None:
+            segments_out = _parse_int_from_fscli(low)
+        elif "segments received" in low and segments_in is None:
+            segments_in = _parse_int_from_fscli(low)
+
+    if segments_retrans is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs23_netstat_rc": rc,
+                "fs23_retransmit_pct": None,
+                "fs23_warn_pct": warn_pct,
+                "fs23_crit_pct": crit_pct,
+                "fs23_reason": "no segments retransmitted line",
+            },
+        }
+    # Preferred denominator: segments_out + segments_in (rough total volume).
+    # Fall back to whichever we found, else 1 to avoid /0.
+    denom = (segments_out or 0) + (segments_in or 0) or segments_in or 1
+    pct = (segments_retrans * 100.0) / denom
+    if pct >= crit_pct:
+        status = "crit"
+    elif pct >= warn_pct:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs23_netstat_rc": rc,
+            "fs23_retransmit_pct": round(pct, 2),
+            "fs23_warn_pct": warn_pct,
+            "fs23_crit_pct": crit_pct,
+        },
+    }
+
+
+def check_fs24_log_error_rate(
+    log_path: str = "/var/log/freeswitch/freeswitch.log",
+    window_min: int = 5,
+    warn_per_min: int = DEFAULT_FS_LOG_ERRORS_PER_MIN_WARN,
+    crit_per_min: int = DEFAULT_FS_LOG_ERRORS_PER_MIN_CRIT,
+) -> dict[str, Any]:
+    """FS-24: count of ERROR lines per minute in the FS log.
+
+    For a hot-running log, we sample only the last 4096 lines to keep this
+    cheap. The rate is "errors in sample / window_min" — for an active log
+    stream the absolute count is also useful even if the time window drifts.
+    """
+    raw = _read_text(log_path)
+    if raw is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs24_path": log_path,
+                "fs24_window_min": window_min,
+                "fs24_errors_per_min": None,
+                "fs24_warn_per_min": warn_per_min,
+                "fs24_crit_per_min": crit_per_min,
+                "fs24_reason": "log not readable",
+            },
+        }
+    lines = raw.splitlines()[-4096:]
+    error_count = sum(1 for ln in lines if "ERROR" in ln)
+    per_min = error_count / max(window_min, 1)
+    if per_min >= crit_per_min:
+        status = "crit"
+    elif per_min >= warn_per_min:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs24_path": log_path,
+            "fs24_window_min": window_min,
+            "fs24_errors_count": error_count,
+            "fs24_errors_per_min": round(per_min, 2),
+            "fs24_warn_per_min": warn_per_min,
+            "fs24_crit_per_min": crit_per_min,
+        },
+    }
+
+
+def check_fs25_fail2ban_active(jail: str = "freeswitch") -> dict[str, Any]:
+    """FS-25: `fail2ban-client status <jail>` reports ≥ 1 banned IP.
+
+    fail2ban is optional; missing client → warn with explanation (don't page
+    for a tool that was never installed).
+    """
+    if shutil.which("fail2ban-client") is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs25_jail": jail,
+                "fs25_banned": None,
+                "fs25_reason": "fail2ban-client not on PATH",
+            },
+        }
+    rc, out, _ = _run(["fail2ban-client", "status", jail], timeout=5)
+    if rc != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs25_jail": jail,
+                "fs25_banned": None,
+                "fs25_rc": rc,
+                "fs25_reason": "fail2ban-client status failed",
+            },
+        }
+    banned = _parse_int_from_fscli(out.splitlines()[-1]) or 0
+    return {
+        "status": "ok",
+        "values": {
+            "fs25_jail": jail,
+            "fs25_banned": banned,
+            "fs25_rc": rc,
+        },
+    }
+
+
+# --- FS-16..25 aggregator (Tier 4 / edge cases) -------------------------
+
+
+def collect_edge_cases(
+    fs_recordings_dir: str = "/var/lib/freeswitch/recordings",
+    fs_log_path: str = "/var/log/freeswitch/freeswitch.log",
+) -> dict[str, Any]:
+    """Run FS-16..25 and return a parallel dict for the snapshot module."""
+    fs16 = check_fs16_cdr_backup_fresh()
+    fs17 = check_fs17_recordings_age(recordings_dir=fs_recordings_dir)
+    fs18 = check_fs18_sofia_packet_loss()
+    fs19 = check_fs19_sofia_jitter()
+    fs20 = check_fs20_codec_mismatch()
+    fs21 = check_fs21_process_rss()
+    fs22 = check_fs22_process_cpu_pct(sample_seconds=0.0)
+    fs23 = check_fs23_tcp_retransmit_pct()
+    fs24 = check_fs24_log_error_rate(log_path=fs_log_path)
+    fs25 = check_fs25_fail2ban_active()
+
+    return {
+        "fs16_latest_backup": fs16["values"]["fs16_latest_backup"],
+        "fs16_age_hours": fs16["values"]["fs16_age_hours"],
+        "fs16_max_age_hours": fs16["values"]["fs16_max_age_hours"],
+        "fs17_oldest_sample_days": fs17["values"]["fs17_oldest_newest_sample_days"],
+        "fs17_path": fs17["values"]["fs17_path"],
+        "fs18_packet_loss_detected": fs18["values"]["fs18_packet_loss_detected"],
+        "fs19_max_jitter_ms": fs19["values"]["fs19_max_jitter_ms"],
+        "fs20_negotiation_count": fs20["values"]["fs20_negotiation_count"],
+        "fs21_rss_bytes": fs21["values"]["fs21_rss_bytes"],
+        "fs22_cpu_pct": fs22["values"]["fs22_cpu_pct"],
+        "fs23_retransmit_pct": fs23["values"]["fs23_retransmit_pct"],
+        "fs24_errors_per_min": fs24["values"]["fs24_errors_per_min"],
+        "fs25_banned": fs25["values"]["fs25_banned"],
+        "fs16_status": fs16["status"],
+        "fs17_status": fs17["status"],
+        "fs18_status": fs18["status"],
+        "fs19_status": fs19["status"],
+        "fs20_status": fs20["status"],
+        "fs21_status": fs21["status"],
+        "fs22_status": fs22["status"],
+        "fs23_status": fs23["status"],
+        "fs24_status": fs24["status"],
+        "fs25_status": fs25["status"],
+    }
+
+
+def evaluate_edge_cases(values: dict[str, Any], rules: dict | None = None) -> str:
+    """Tier-4 evaluate: FS-16..25.
+
+    Edge-case checks. Worst-of.
+    """
+    statuses = [
+        values.get(f"fs{n}_status", "warn")
+        for n in (16, 17, 18, 19, 20, 21, 22, 23, 24, 25)
     ]
     order = {"ok": 0, "warn": 1, "crit": 2}
     worst = max(statuses, key=lambda s: order.get(s, 1))
