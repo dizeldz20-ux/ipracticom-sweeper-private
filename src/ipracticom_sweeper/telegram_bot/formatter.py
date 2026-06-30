@@ -316,4 +316,60 @@ def format_fleet_host(host: dict) -> str:
         lines.append(f"  instance: <code>{escape_html(str(host['instance_id']))}</code>")
     if "region" in host:
         lines.append(f"  region: <code>{escape_html(str(host['region']))}</code>")
+
+    # v0.4.5: Surface the psutil snapshot (extra block) for the local host.
+    # Only the local host carries extra — connectors don't have psutil metrics.
+    extra = host.get("extra") if isinstance(host.get("extra"), dict) else None
+    if extra and not extra.get("error"):
+        lines.append("")
+        lines.append("━━ <b>מדדים עדכניים</b> ━━")
+        cpu = extra.get("cpu") if isinstance(extra.get("cpu"), dict) else {}
+        if cpu:
+            pct = cpu.get("percent")
+            cores = cpu.get("cores")
+            if isinstance(pct, (int, float)):
+                core_str = f" ({cores} cores)" if isinstance(cores, int) else ""
+                lines.append(f"  🖥️ <b>CPU</b>: {pct:.1f}%{core_str}")
+        mem = extra.get("memory") if isinstance(extra.get("memory"), dict) else {}
+        if mem:
+            pct = mem.get("percent")
+            used = mem.get("used_mb")
+            total = mem.get("total_mb")
+            parts: list[str] = []
+            if isinstance(pct, (int, float)):
+                parts.append(f"{pct:.1f}%")
+            if isinstance(used, (int, float)) and isinstance(total, (int, float)):
+                parts.append(f"({used:.0f}/{total:.0f} MB)")
+            if parts:
+                lines.append(f"  🧠 <b>זיכרון</b>: {' '.join(parts)}")
+        disk = extra.get("disk") if isinstance(extra.get("disk"), dict) else {}
+        if disk:
+            pct = disk.get("percent")
+            used = disk.get("used_gb")
+            total = disk.get("total_gb")
+            parts = []
+            if isinstance(pct, (int, float)):
+                parts.append(f"{pct:.1f}%")
+            if isinstance(used, (int, float)) and isinstance(total, (int, float)):
+                parts.append(f"({used:.1f}/{total:.1f} GB)")
+            if parts:
+                lines.append(f"  💾 <b>דיסק</b>: {' '.join(parts)}")
+        net = extra.get("network") if isinstance(extra.get("network"), dict) else {}
+        if net:
+            sent = net.get("bytes_sent")
+            recv = net.get("bytes_recv")
+            if isinstance(sent, int) and isinstance(recv, int):
+                lines.append(f"  🌐 <b>רשת</b>: {sent/1e6:.1f} MB sent / {recv/1e6:.1f} MB received")
+        uptime = extra.get("uptime_seconds")
+        booted = extra.get("booted_at")
+        if isinstance(uptime, (int, float)) and uptime > 0:
+            days = int(uptime // 86400)
+            hours = int((uptime % 86400) // 3600)
+            mins = int((uptime % 3600) // 60)
+            uptime_str = f"{days}d {hours}h {mins}m" if days else f"{hours}h {mins}m"
+            boot_str = f" (booted: <code>{escape_html(str(booted))}</code>)" if booted else ""
+            lines.append(f"  ⏱️ <b>Uptime</b>: {uptime_str}{boot_str}")
+    elif extra and extra.get("error"):
+        lines.append(f"  <i>(metrics unavailable: {escape_html(str(extra['error']))})</i>")
+
     return "\n".join(lines)

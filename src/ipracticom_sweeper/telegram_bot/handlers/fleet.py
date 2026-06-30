@@ -71,17 +71,14 @@ async def fleet_host(update, context) -> dict[str, Any]:
 
     text = format_fleet_host(host)
 
-    # For the local host, also surface live metrics from the latest snapshot.
-    metrics_block = ""
-    log_buttons: list[list[InlineKeyboardButton]] = []
-    if name == "local":
-        try:
-            snap = await _agent(context).get_snapshot()
-            metrics_block = _format_local_metrics(snap)
-        except AgentAPIError as e:
-            metrics_block = f"\n\n<i>(לא ניתן להביא snapshot: {e})</i>"
-
-    text = text + metrics_block
+    # v0.4.5: The host dict already contains the psutil snapshot (extra block).
+    # The legacy /api/snapshot call is no longer needed for the local host —
+    # format_fleet_host already rendered the metrics inline. We append the
+    # secondary metrics block only as a fallback if format_fleet_host didn't
+    # surface them (e.g. legacy connector-style hosts).
+    # In v0.4.5, format_fleet_host already covers the local case; the
+    # _format_local_metrics helper stays for any caller that still wants
+    # the snapshot fallback path.
 
     # Log buttons — every host gets them.
     log_buttons = [
@@ -277,11 +274,31 @@ async def fleet_download(update, context) -> dict[str, Any]:
 # ---------- helpers ----------
 
 def _format_local_metrics(snap: dict) -> str:
-    """Pull CPU/memory/disk/network out of a /api/snapshot payload."""
-    mods = (snap.get("modules") or {}) if isinstance(snap, dict) else {}
+    """Pull CPU/memory/disk/network out of a fleet/local payload (v0.4.4 extra shape).
+
+    Accepts either:
+    - /api/fleet/local response (has 'extra' block with cpu/memory/disk/network keys)
+    - /api/snapshot response (has 'modules' block with cpu/memory/disk/network modules)
+    """
     lines: list[str] = ["", "━━ <b>מדדים עדכניים</b> ━━", ""]
 
-    def _pct(info: dict) -> str | None:
+    # Detect shape: v0.4.4 extra block vs old /api/snapshot modules block.
+    if isinstance(snap, dict) and isinstance(snap.get("extra"), dict):
+        mods = snap["extra"]
+        is_extra = True
+    else:
+        mods = (snap.get("modules") or {}) if isinstance(snap, dict) else {}
+        is_extra = False
+
+    def _pct_from_extra(info: dict) -> str | None:
+        if not isinstance(info, dict):
+            return None
+        pct = info.get("percent")
+        if isinstance(pct, (int, float)):
+            return f"{pct:.1f}%"
+        return None
+
+    def _pct_from_snapshot(info: dict) -> str | None:
         if not isinstance(info, dict):
             return None
         d = info.get("details") if isinstance(info.get("details"), dict) else {}
@@ -290,6 +307,8 @@ def _format_local_metrics(snap: dict) -> str:
             if isinstance(v, (int, float)):
                 return f"{v:.1f}%"
         return None
+
+    _pct = _pct_from_extra if is_extra else _pct_from_snapshot
 
     for label, mod_name, emoji in [
         ("CPU", "cpu", "🖥️"),
@@ -306,7 +325,7 @@ def _format_local_metrics(snap: dict) -> str:
         else:
             lines.append(f"  {emoji} <b>{label}</b>: {s_emoji} <i>(אין נתון)</i>")
 
-    defcon = snap.get("defcon")
+    defcon = snap.get("defcon") if isinstance(snap, dict) else None
     if defcon is not None:
         lines.append(f"\n<i>DEFCON: {defcon}</i>")
 

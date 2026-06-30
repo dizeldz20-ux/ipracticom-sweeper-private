@@ -2,6 +2,21 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.5] — 2026-06-30 — Fleet view renders real metrics + English connector prompts
+
+### Fixed
+- **`format_fleet_host` ignored the `extra` block** — the v0.4.4 endpoint was returning the psutil snapshot, but the formatter only printed defcon/problems/last_seen. Operators saw `🖥️ CPU: ❌ (אין נתונים)` on local hosts. v0.4.5 surfaces CPU% (with core count), memory (used/total MB + %), disk (used/total GB + %), network (MB sent/recv), uptime (Xd Yh Zm + booted_at) inline.
+- **`fleet_host` handler was making a redundant `/api/snapshot` call** to fill in the same data `extra` already had. Removed the extra HTTP roundtrip — the host dict from `/api/fleet/local` is now sufficient.
+- **`_format_local_metrics` now understands the v0.4.4 `extra` block** (cpu.percent / memory.percent / disk.percent / network.*) in addition to the legacy `modules.*.details.percent` shape from `/api/snapshot`. Backward-compatible.
+
+### Changed
+- **Connector form prompts are now in English** (operator requested English). The 4 steps (name, instance_id, region, tags) and all validation error messages now say exactly which value format is expected (`i-` prefix, AWS region examples, `key=value,key=value` for tags, etc.). The "❌ Cancel" button is also English.
+- **`pyproject.toml`** → 0.4.5
+
+### Tests
+- **724/724 passing** (+10 from v0.4.4: `tests/test_fleet_metrics_render.py` covers the new formatter behaviour and the English prompt contract).
+- Updated `tests/test_telegram_handlers_fleet.py::test_fleet_host_local_shows_live_metrics` to feed the `extra` block instead of the legacy `modules` shape.
+
 ## [0.4.4] — 2026-06-30 — Real local metrics (psutil) + seed connector cleanup
 
 ### Added

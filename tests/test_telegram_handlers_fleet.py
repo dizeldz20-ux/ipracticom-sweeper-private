@@ -32,25 +32,28 @@ async def test_fleet_host_local_shows_live_metrics():
             return {
                 "name": "local", "kind": "local", "status": "ok",
                 "defcon": 4, "problems_found": 1,
+                "extra": {
+                    "cpu": {"percent": 23.5, "cores": 4},
+                    "memory": {"percent": 61.0, "used_mb": 12400, "total_mb": 20400},
+                    "disk": {"percent": 91.2, "used_gb": 230.5, "total_gb": 253.0},
+                    "network": {"bytes_sent": 1000, "bytes_recv": 2000},
+                    "uptime_seconds": 60862,
+                    "booted_at": "2026-06-29T11:57:00+00:00",
+                },
             }
 
         async def get_snapshot(self):
-            return {
-                "defcon": 4,
-                "modules": {
-                    "cpu": {"status": "ok", "details": {"percent": 23.5}},
-                    "memory": {"status": "ok", "details": {"percent": 61.0}},
-                    "disk": {"status": "warn", "details": {"percent": 91.2}},
-                    "network": {"status": "ok", "details": {}},
-                },
-            }
+            # v0.4.5: no longer used for local host — extra block already
+            # carries the metrics. Returned here only to verify backward
+            # compatibility for any caller that still passes it.
+            return {}
 
     cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
     ctx = _ctx(cfg, FakeAgent())
     update = _update(chat_id=42, callback_data="fleet:host:local")
     result = await fleet_handler.fleet_host(update, ctx)
     text = result["text"]
-    # Live metrics block
+    # Live metrics block — now sourced from extra (v0.4.4 psutil snapshot).
     assert "CPU" in text
     assert "23.5%" in text
     assert "61.0%" in text

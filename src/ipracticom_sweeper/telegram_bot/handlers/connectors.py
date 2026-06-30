@@ -214,11 +214,13 @@ async def connector_add(update, context) -> dict[str, Any]:
     set_connector_form(user_data, ConnectorFormState(step=ConnectorField.NAME))
     return {
         "text": (
-            "➕ <b>הוספת מחבר חדש</b>\n\n"
-            "שלב 1/4 — שם המחבר (באנגלית, אותיות/מספרים/מקפים בלבד):"
+            "➕ <b>Add new connector (SSM)</b>\n\n"
+            "Step 1/4 — <b>name</b>:\n"
+            "<i>English letters, digits, dashes (-), underscores (_) only.</i>\n"
+            "<i>Example: prod-web-1</i>"
         ),
         "reply_markup": InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ בטל", callback_data="menu:connectors")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="menu:connectors")],
         ]),
     }
 
@@ -229,7 +231,7 @@ async def connector_edit(update, context) -> dict[str, Any]:
     data = (getattr(cq, "data", "") or "")
     name = data.split(":", 2)[2] if data.count(":") >= 2 else ""
     if not name:
-        return {"text": "❌ שם מחבר חסר", "reply_markup": back_to_main()}
+        return {"text": "❌ Missing connector name", "reply_markup": back_to_main()}
 
     user_data = getattr(context, "user_data", None) or {}
     set_connector_form(
@@ -242,11 +244,11 @@ async def connector_edit(update, context) -> dict[str, Any]:
     )
     return {
         "text": (
-            f"✏️ <b>עריכת {name}</b>\n\n"
-            "שלח instance_id חדש (או שלח '-' כדי לא לשנות):"
+            f"✏️ <b>Edit {name}</b>\n\n"
+            "Send new <b>instance_id</b> (or '-' to keep current):"
         ),
         "reply_markup": InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ בטל", callback_data=f"conn:view:{name}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"conn:view:{name}")],
         ]),
     }
 
@@ -274,18 +276,21 @@ async def connector_text_input(update, context) -> dict[str, Any] | None:
     if state.step == ConnectorField.NAME:
         if not msg_text or not msg_text.replace("-", "").replace("_", "").isalnum():
             return {
-                "text": "❌ שם לא תקין. השתמש באותיות אנגליות, מספרים, מקפים וקווים תחתונים בלבד.",
+                "text": "❌ Invalid name.\nUse English letters, digits, dashes (-), and underscores (_) only.\nExample: prod-web-1",
                 "reply_markup": InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ בטל", callback_data="menu:connectors")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="menu:connectors")],
                 ]),
             }
         state.values["name"] = msg_text
         state.step = ConnectorField.INSTANCE_ID
         set_connector_form(user_data, state)
         return {
-            "text": f"✅ שם: <code>{msg_text}</code>\n\nשלב 2/4 — instance_id (i-...):",
+            "text": f"✅ name: <code>{msg_text}</code>\n\n"
+                    f"Step 2/4 — <b>instance_id</b>:\n"
+                    f"<i>Must start with 'i-' and be at least 10 characters.</i>\n"
+                    f"<i>Example: i-0123456789abcdef0</i>",
             "reply_markup": InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ בטל", callback_data="menu:connectors")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="menu:connectors")],
             ]),
         }
 
@@ -294,9 +299,9 @@ async def connector_text_input(update, context) -> dict[str, Any] | None:
             pass  # keep existing
         elif not msg_text.startswith("i-") or len(msg_text) < 10:
             return {
-                "text": "❌ instance_id לא תקין (צריך להתחיל ב-i- ולהיות לפחות 10 תווים).",
+                "text": "❌ Invalid instance_id.\nMust start with 'i-' and be at least 10 characters.\nExample: i-0123456789abcdef0",
                 "reply_markup": InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ בטל", callback_data="menu:connectors")],
+                    [InlineKeyboardButton("❌ Cancel", callback_data="menu:connectors")],
                 ]),
             }
         else:
@@ -305,9 +310,11 @@ async def connector_text_input(update, context) -> dict[str, Any] | None:
         set_connector_form(user_data, state)
         return {
             "text": f"✅ instance_id: <code>{state.values.get('instance_id', '?')}</code>\n\n"
-                    "שלב 3/4 — region (למשל il-central-1, eu-west-1, או '-' לברירת מחדל):",
+                    f"Step 3/4 — <b>region</b>:\n"
+                    f"<i>AWS region (e.g. il-central-1, eu-west-1, us-east-1).</i>\n"
+                    f"<i>Send '-' to use the default (il-central-1).</i>",
             "reply_markup": InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ בטל", callback_data="menu:connectors")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="menu:connectors")],
             ]),
         }
 
@@ -318,9 +325,12 @@ async def connector_text_input(update, context) -> dict[str, Any] | None:
         set_connector_form(user_data, state)
         return {
             "text": "✅ region: <code>" + str(state.values.get("region", "il-central-1")) + "</code>\n\n"
-                    "שלב 4/4 — tags (פורמט: key=value,key=value, או '-' לדלג):",
+                    "Step 4/4 — <b>tags</b>:\n"
+                    "<i>Optional. Format: key=value,key=value</i>\n"
+                    "<i>Example: env=prod,role=web</i>\n"
+                    "<i>Send '-' to skip.</i>",
             "reply_markup": InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ בטל", callback_data="menu:connectors")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="menu:connectors")],
             ]),
         }
 
