@@ -1503,3 +1503,120 @@ main.container {
   color: var(--slate-500);
 }
 .v6-stat-card-alert { border-color: rgba(244, 63, 94, 0.35); }
+
+/* =====================================================================
+   v0.6.0 — slice 6.1: machine list table (read-only).
+   Routed through the approvals gate in 6.2 (slice intentionally absent).
+===================================================================== */
+
+.v6-empty {
+  text-align: center;
+  padding: 2rem;
+}
+
+.v6-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.95rem;
+  background: var(--v6-indigo);
+  color: white;
+  border-radius: 9999px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.v6-btn:hover { background: #4f46e5; text-decoration: none; }
+
+.v6-table-wrap { overflow-x: auto; padding: 0.5rem; }
+.v6-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+}
+.v6-table thead th {
+  text-align: start;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate-500);
+  border-bottom: 1px solid var(--slate-800);
+  background: transparent;
+}
+.v6-table tbody td {
+  padding: 0.85rem 0.85rem;
+  border-bottom: 1px solid var(--slate-800);
+  color: var(--slate-200);
+}
+.v6-table tbody tr:last-child td { border-bottom: none; }
+
+.v6-table .v6-row-host:hover { background: var(--slate-800); }
+
+/* defcon-tinted row edge (matches vibe sidebar pills). */
+.v6-table .defcon-red    td:first-child { box-shadow: inset 3px 0 0 var(--v6-rose); }
+.v6-table .defcon-orange td:first-child { box-shadow: inset 3px 0 0 var(--v6-amber); }
+.v6-table .defcon-yellow td:first-child { box-shadow: inset 3px 0 0 var(--v6-amber); }
+.v6-table .defcon-green  td:first-child { box-shadow: inset 3px 0 0 var(--v6-emerald); }
+.v6-table .defcon-black  td:first-child { box-shadow: inset 3px 0 0 #6e40c9; }
+
+.v6-modules {
+  display: flex; flex-wrap: wrap; gap: 0.3rem;
+}
+.v6-modules .v6-pill { font-size: 0.72rem; padding: 0.15rem 0.55rem; }
+
+/* =====================================================================
+   v0.6.0 — slice 6.2: maintenance + actions dropdowns.
+   Maintenance is metadata-only (no approvals). All destructive actions
+   route through the existing /approvals queue (handled outside this slice).
+===================================================================== */
+
+.v6-row-maint { background: rgba(245, 158, 11, 0.08); }
+.v6-inline-form { display: inline-block; margin: 0; }
+.v6-btn-link {
+  background: none;
+  border: 0;
+  color: var(--v6-sky);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.85rem;
+}
+.v6-btn-link:hover { text-decoration: underline; }
+.v6-btn-link.v6-danger { color: var(--v6-rose); }
+
+.v6-maint-dropdown, .v6-actions-dropdown {
+  position: relative;
+  display: inline-block;
+}
+.v6-maint-menu, .v6-actions-menu {
+  position: absolute;
+  inset-inline-end: 0;             /* RTL friendly */
+  top: 100%;
+  margin-block-start: 0.35rem;
+  background: var(--slate-900);
+  border: 1px solid var(--slate-700);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  min-width: 180px;
+  z-index: 50;
+  padding: 0.4rem;
+  display: flex; flex-direction: column;
+  gap: 0.2rem;
+}
+.v6-maint-menu form, .v6-actions-menu form { margin: 0; }
+.v6-maint-menu button, .v6-actions-menu button {
+  width: 100%;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  color: var(--slate-200);
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.v6-maint-menu button:hover, .v6-actions-menu button:hover {
+  background: var(--slate-800);
+}

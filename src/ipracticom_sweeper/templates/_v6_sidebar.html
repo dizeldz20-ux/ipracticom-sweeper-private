@@ -17,6 +17,9 @@
     <a href="/v6" class="v6-nav-item {{ 'active' if request.path == '/v6' }}">
       <span class="v6-nav-dot"></span> לוח בקרה
     </a>
+    <a href="/v6/machines" class="v6-nav-item {{ 'active' if request.path == '/v6/machines' }}">
+      <span class="v6-nav-dot"></span> מכונות
+    </a>
     <a href="{{ url_for('fleet_view') }}" class="v6-nav-item {{ 'active' if ep in ('fleet_view','fleet_host_detail') }}">
       <span class="v6-nav-dot"></span> צי שרתים
     </a>

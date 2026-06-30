@@ -278,8 +278,6 @@ def _fetch_v6_stats() -> dict:
     if not _is_remote_mode():
         try:
             from ipracticom_sweeper.fleet import aggregate, load_all_snapshots
-            from ipracticom_sweeper.config.connectors import load_connectors
-
             connectors = load_connectors()
             snapshots = load_all_snapshots()
             if connectors or snapshots:
@@ -747,6 +745,221 @@ def approval_reject(pid):
         "reason": reason,
     })
     return _redirect_to_dashboard()
+
+
+def _save_maintenance_state(host: str, state: dict | None) -> dict | None:
+    """Persist a maintenance entry to a JSON sidecar under state dir.
+
+    Lightweight, additive: writes /var/lib/ipracticom-sweeper/maintenance/<host>.json.
+    Returns the previous state (or None) for idempotent toggling.
+    """
+    from pathlib import Path as _P
+    import json as _json
+    base = _P(os.environ.get(
+        "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper")) / "maintenance"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / f"{host}.json"
+    prev = None
+    if path.exists():
+        try:
+            prev = _json.loads(path.read_text())
+        except Exception:
+            prev = None
+    if state is None:
+        if path.exists():
+            path.unlink()
+    else:
+        path.write_text(_json.dumps(state, ensure_ascii=False, default=str))
+    return prev
+
+
+def _get_maintenance_state(host: str) -> dict | None:
+    """Read the maintenance state for a host (or None if not under maintenance)."""
+    from pathlib import Path as _P
+    import json as _json
+    base = _P(os.environ.get(
+        "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper")) / "maintenance"
+    path = base / f"{host}.json"
+    if not path.exists():
+        return None
+    try:
+        return _json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+@app.route("/v6/machines/<host>/maintenance", methods=["POST"])
+def v6_machines_maintenance(host: str):
+    """v0.6.0 — slice 6.2: enable maintenance mode for a host.
+
+    Body (form-encoded):
+        duration_min: int  — 15 / 60 / 240 / 0 (= indefinite). Validated.
+    Rejects unknown durations with 400.
+
+    This is metadata-only — the monitoring agents check this file before
+    auto-repair. It is NOT a destructive op and therefore does NOT route
+    through the approvals queue (operator's standing rule).
+    """
+    valid_durations = (15, 60, 240, 0)
+    raw = request.form.get("duration_min", "15")
+    try:
+        duration = int(raw)
+    except ValueError:
+        return jsonify({"ok": False, "error": f"duration_min must be int, got {raw!r}"}), 400
+    if duration not in valid_durations:
+        return jsonify({
+            "ok": False,
+            "error": f"duration_min must be one of {sorted(valid_durations)}, got {duration}",
+        }), 400
+
+    now = datetime.now(timezone.utc)
+    expires_at = None if duration == 0 else (
+        now.timestamp() + duration * 60
+    )
+    state = {
+        "host": host,
+        "enabled_at": now.isoformat(),
+        "duration_min": duration,
+        "expires_at_ts": expires_at,
+    }
+    _save_maintenance_state(host, state)
+    return jsonify({"ok": True, "state": state})
+
+
+@app.route("/v6/machines/<host>/maintenance/off", methods=["POST"])
+def v6_machines_maintenance_off(host: str):
+    """v0.6.0 — slice 6.2: exit maintenance mode (instant clear)."""
+    prev = _save_maintenance_state(host, None)
+    return jsonify({"ok": True, "previous": prev})
+
+
+def _enqueue_machine_action_proposal(*, host: str, action: str, reason: str, command: str) -> dict:
+    """Write a `RepairProposal` so the operator must approve in `/approvals`.
+
+    Used for destructive ops (reboot, agent_restart, ssm_connect). The proposal
+    shows up in the existing approvals queue with the exact command that would
+    be executed on approval. No state mutation happens here.
+    """
+    from ipracticom_sweeper.repair.pending import create_proposal
+    proposal = create_proposal(
+        action=action,
+        kwargs={"host": host},
+        reason=reason,
+        problem={"host": host, "source": "v6_machines"},
+        proposed_command=command,
+    )
+    return proposal.to_dict()
+
+
+@app.route("/v6/machines/<host>/action", methods=["POST"])
+def v6_machines_action(host: str):
+    """v0.6.0 — slice 6.2: enqueue a destructive machine action.
+
+    Body (form-encoded): `action` in {agent_restart, reboot, ssm_connect}.
+    Every action writes a RepairProposal and returns the proposal id. The
+    operator must visit `/approvals/<pid>/approve` to actually execute it.
+
+    No state mutation here — this slice is queue-only.
+    """
+    if _is_remote_mode():
+        return jsonify({"ok": False, "error": "machine actions local-only"}), 400
+
+    op = (request.form.get("action") or "").strip()
+    if op not in ("agent_restart", "reboot", "ssm_connect"):
+        return jsonify({
+            "ok": False,
+            "error": f"unknown action {op!r}; expected agent_restart|reboot|ssm_connect",
+        }), 400
+
+    if op == "agent_restart":
+        proposal = _enqueue_machine_action_proposal(
+            host=host,
+            action="agent_restart",
+            reason=f"agent restart requested for {host} via v6 machines page",
+            command=f"systemctl restart ipracticom-sweeper-agent@{host}",
+        )
+    elif op == "reboot":
+        proposal = _enqueue_machine_action_proposal(
+            host=host,
+            action="reboot",
+            reason=f"reboot requested for {host} via v6 machines page",
+            command=f"ssh {host} 'sudo shutdown -r now'",
+        )
+    else:  # ssm_connect
+        proposal = _enqueue_machine_action_proposal(
+            host=host,
+            action="ssm_connect",
+            reason=f"SSM session requested for {host} via v6 machines page",
+            command=f"aws ssm start-session --target $(aws ssm describe-instances --filters Name=tag:Name,Values={host} --query 'Reservations[].Instances[].InstanceId' --output text)",
+        )
+
+    return jsonify({"ok": True, "queued": True, "proposal": proposal})
+
+
+@app.route("/v6/machines")
+def v6_machines():
+    """v0.6.0 — slice 6.1: dark table view of the fleet.
+
+    Reads the same fleet aggregator as `/fleet` but renders a compact,
+    v6-styled table. Read-only in this slice — actions come in 6.2.
+    """
+    from ipracticom_sweeper.config import load_connectors
+    from ipracticom_sweeper.fleet import aggregate, load_all_snapshots
+
+    connectors = load_connectors()
+    snapshots_raw = load_all_snapshots()
+
+    converted = []
+    raw_by_name = {s["name"]: s for s in snapshots_raw}
+    for conn in connectors:
+        if conn.name not in raw_by_name:
+            converted.append({
+                "name": conn.name, "server": conn.name,
+                "defcon": 0, "defcon_label": "black",
+                "problems_found": 0, "ts": 0.0, "modules": {},
+                "_unavailable_reason": "no data yet — waiting for first collection",
+            })
+            continue
+        entry = raw_by_name[conn.name]
+        snap_dict = entry.get("snapshot", {}) or {}
+        if not snap_dict.get("available", False):
+            converted.append({
+                "name": conn.name, "server": conn.name,
+                "defcon": 0, "defcon_label": "black",
+                "problems_found": 0, "ts": 0.0, "modules": {},
+                "_unavailable_reason": snap_dict.get("reason", "unknown"),
+            })
+            continue
+        converted.append({
+            "name": conn.name,
+            "server": snap_dict.get("server", conn.name),
+            "defcon": snap_dict.get("defcon", 5),
+            "defcon_label": snap_dict.get("defcon_label", "green"),
+            "problems_found": snap_dict.get("problems_found", 0),
+            "ts": snap_dict.get("ts", 0.0),
+            "modules": snap_dict.get("modules", {}),
+        })
+
+    summary = aggregate(converted) if converted else None
+
+    # Maintenance map: host → state dict (None if absent).
+    maint_hosts = {}
+    if summary and getattr(summary, "hosts", None):
+        for h in summary.hosts:
+            ms = _get_maintenance_state(h.host_id)
+            if ms:
+                maint_hosts[h.host_id] = ms
+
+    return render_template(
+        "v6_machines.html",
+        summary=summary,
+        hosts=summary.hosts if summary else [],
+        connectors_count=len(connectors),
+        maint_hosts=maint_hosts,
+        now_iso=datetime.now(timezone.utc).isoformat(),
+        identity=_fetch_identity(),
+        is_remote=_is_remote_mode(),
+    )
 
 
 @app.route("/v6")
