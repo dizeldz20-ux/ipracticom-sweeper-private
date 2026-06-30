@@ -158,7 +158,35 @@ CHECK_REGISTRY: list[dict[str, Any]] = [
         "description_he": "heartbeat של הסוכן עצמו.",
         "rule_keys": [],
     },
-]
+    # v0.5.0: FreeSWITCH Tier 1 — service health (FS-01..FS-05)
+    {
+        "key": "freeswitch",
+        "label_he": "FreeSWITCH — סטטוס שירות",
+        "description_he": "Tier 1: האם ה-process רץ, systemd active, ports 5060/5080 פתוחים, fs_cli עונה. כל ה-5 = crit אם נופל.",
+        "rule_keys": [],
+    },
+    # v0.5.0: FreeSWITCH Tier 2 — network integrity (FS-06..FS-09)
+    {
+        "key": "freeswitch_network",
+        "label_he": "FreeSWITCH — רשת ו-signaling",
+        "description_he": "Tier 2: SIP peers, registrations, gateways, RTP ports. Zero registrations = crit.",
+        "rule_keys": [],
+    },
+    # v0.5.0: FreeSWITCH Tier 3 — operational + baseline drift (FS-10..FS-15)
+    {
+        "key": "freeswitch_operational",
+        "label_he": "FreeSWITCH — תפעול ו-drift",
+        "description_he": "Tier 3: cli latency, active calls/channels, disk, config drift, baseline.",
+        "rule_keys": [],
+    },
+    # v0.5.0: FreeSWITCH Tier 4 — edge cases (FS-16..FS-25)
+    {
+        "key": "freeswitch_edge",
+        "label_he": "FreeSWITCH — מקרי קצה",
+        "description_he": "Tier 4: גיבוי CDR, recordings, packet loss, jitter, codec, RSS, CPU, TCP retransmits, log errors, fail2ban.",
+        "rule_keys": [],
+    },
+]  # v0.5.0 baseline (slice 1.x + Sprint 2 FS integration)
 
 
 def get_check(module_key: str) -> dict[str, Any] | None:
