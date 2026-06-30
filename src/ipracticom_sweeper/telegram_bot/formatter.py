@@ -200,20 +200,59 @@ def format_history_catalog(catalog: dict) -> str:
 
 
 def format_approvals_list(pending: list[dict]) -> str:
-    """Approvals overview: list of pending repair proposals."""
+    """Approvals overview: list of pending repair proposals.
+
+    v0.4.6 (Daniel #5): Each entry surfaces (a) what was detected
+    (problem.detail + severity emoji), (b) the proposed fix (proposed_command
+    or action+kwargs), (c) metrics that drove the decision. Operator can
+    approve/reject without drilling into a separate view.
+    """
     if not pending:
         return "✅ <b>אין תיקונים הממתינים לאישור</b>\n<i>המערכת יציבה</i>"
 
-    lines: list[str] = [f"📋 <b>{len(pending)} תיקונים ממתינים</b>", ""]
-    for p in pending[:8]:
+    severity_emoji = {"crit": "🚨", "warn": "⚠️", "info": "ℹ️"}
+
+    def _fmt_metrics(metrics: dict | None) -> str:
+        if not isinstance(metrics, dict) or not metrics:
+            return ""
+        parts: list[str] = []
+        for k, v in list(metrics.items())[:4]:
+            parts.append(f"{k}={v}")
+        return " · ".join(parts)
+
+    def _fmt_proposal(p: dict) -> list[str]:
+        out: list[str] = []
         pid = str(p.get("id", "?"))[:8]
         action = str(p.get("action", "?"))
-        reason = str(p.get("reason", ""))
-        lines.append(f"  • <code>{pid}</code> <b>{escape_html(action)}</b>")
+        kwargs = p.get("kwargs") if isinstance(p.get("kwargs"), dict) else {}
+        problem = p.get("problem") if isinstance(p.get("problem"), dict) else {}
+        reason = str(p.get("reason", "") or problem.get("detail", ""))
+        proposed_cmd = str(p.get("proposed_command", "") or "").strip()
+        severity = str(problem.get("severity", "") or "warn").lower()
+        sev_emoji = severity_emoji.get(severity, "⚠️")
+
+        # Build the human-readable fix description (preferred: proposed_command).
+        if proposed_cmd:
+            fix_desc = proposed_cmd
+        else:
+            fix_desc = action + "(" + ", ".join(f"{k}={v}" for k, v in kwargs.items()) + ")" if kwargs else action
+
+        out.append(f"  {sev_emoji} <code>{escape_html(pid)}</code> <b>{escape_html(action)}</b>")
         if reason:
-            lines.append(f"    <i>{escape_html(reason[:80])}</i>")
+            out.append(f"    <i>זוהה: {escape_html(reason[:140])}</i>")
+        metrics_str = _fmt_metrics(problem.get("metrics"))
+        if metrics_str:
+            out.append(f"    <i>מדדים: {escape_html(metrics_str[:160])}</i>")
+        out.append(f"    → <b>תיקון מוצע:</b> <code>{escape_html(fix_desc[:120])}</code>")
+        return out
+
+    lines: list[str] = [f"📋 <b>{len(pending)} תיקונים ממתינים לאישור</b>", ""]
+    for p in pending[:8]:
+        lines.extend(_fmt_proposal(p))
     if len(pending) > 8:
-        lines.append(f"  <i>...+{len(pending) - 8} more</i>")
+        lines.append(f"  <i>...+{len(pending) - 8} עוד ממתינים</i>")
+    lines.append("")
+    lines.append("לחץ על מזהה ברשימה למטה לאישור/דחייה:")
     return "\n".join(lines)
 
 

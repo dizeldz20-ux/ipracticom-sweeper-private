@@ -92,55 +92,122 @@ def test_pipeline_auto_repair_off(default_rules, warn_memory_snapshot):
 
 
 def test_pipeline_auto_repair_executes_drop_caches(default_rules, warn_memory_snapshot):
-    """When memory hits warn threshold, drop_caches should fire."""
-    with patch("ipracticom_sweeper.pipeline.run_monitor", return_value=warn_memory_snapshot):
-        with patch("ipracticom_sweeper.pipeline.execute_repair") as mock_execute:
-            mock_execute.return_value.success = True
-            mock_execute.return_value.action = "drop_caches"
-            mock_execute.return_value.target = "level=3"
-            mock_execute.return_value.message = "ok"
-            mock_execute.return_value.duration_ms = 5
-            mock_execute.return_value.snapshot_id = "snap-123"
-            mock_execute.return_value.error = None
-            mock_execute.return_value.rollback_available = False
+    """v0.4.6 (Daniel #4): With default=needs_approval, drop_caches creates a
+    pending proposal instead of executing. The operator must approve via /approvals.
+    """
+    from ipracticom_sweeper.repair import pending as pending_mod
+    pending_dir = default_rules  # dummy to keep signature; not used
+    # Use a temp pending dir to capture the proposal.
+    import tempfile, json
+    from pathlib import Path as P
+    with tempfile.TemporaryDirectory() as tmp:
+        from ipracticom_sweeper.repair import pending as pm
+        original_pending = pm.PENDING_DIR
+        original_approved = pm.APPROVED_DIR
+        original_rejected = pm.REJECTED_DIR
+        original_audit = pm.AUDIT_LOG
+        pm.PENDING_DIR = P(tmp) / "pending"
+        pm.APPROVED_DIR = P(tmp) / "approved"
+        pm.REJECTED_DIR = P(tmp) / "rejected"
+        pm.AUDIT_LOG = P(tmp) / "audit" / "repairs.jsonl"
+        pm.PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            with patch("ipracticom_sweeper.pipeline.run_monitor", return_value=warn_memory_snapshot):
+                result = run_pipeline(default_rules, auto_repair=True, dry_run=False)
 
-            result = run_pipeline(default_rules, auto_repair=True, dry_run=False)
-
-    assert result.repairs_attempted == 1
-    assert result.repairs_succeeded == 1
-    assert mock_execute.called
-    assert mock_execute.call_args[0][0] == "drop_caches"
+            # No auto-execution — the repair is queued for approval.
+            assert result.repairs_attempted == 0
+            assert result.repairs_succeeded == 0
+            # A proposal was created on disk.
+            proposals = list(pm.PENDING_DIR.glob("*.json"))
+            assert len(proposals) == 1
+            proposal = json.loads(proposals[0].read_text())
+            assert proposal["action"] == "drop_caches"
+            assert proposal["status"] == "pending"
+            assert "reason" in proposal and proposal["reason"]
+            assert "proposed_command" in proposal
+            # Pipeline result marks the repair as awaiting_approval.
+            assert any(r.get("status") == "awaiting_approval" for r in result.repair_results)
+        finally:
+            pm.PENDING_DIR = original_pending
+            pm.APPROVED_DIR = original_approved
+            pm.REJECTED_DIR = original_rejected
+            pm.AUDIT_LOG = original_audit
 
 
 def test_pipeline_repair_failure_counted(default_rules, warn_memory_snapshot):
-    """If a repair fails, we record the failure but don't abort."""
-    with patch("ipracticom_sweeper.pipeline.run_monitor", return_value=warn_memory_snapshot):
-        with patch("ipracticom_sweeper.pipeline.execute_repair") as mock_execute:
-            mock_execute.return_value.success = False
-            mock_execute.return_value.action = "drop_caches"
-            mock_execute.return_value.target = "level=3"
-            mock_execute.return_value.message = "permission denied"
-            mock_execute.return_value.duration_ms = 1
-            mock_execute.return_value.snapshot_id = None
-            mock_execute.return_value.error = "PermissionError"
-            mock_execute.return_value.rollback_available = False
+    """v0.4.6 (Daniel #4): With default=needs_approval, failures are no longer
+    applicable for auto-execution. Instead verify the proposal contains the
+    problem details so the operator can decide.
+    """
+    import tempfile, json
+    from pathlib import Path as P
+    from ipracticom_sweeper.repair import pending as pm
+    with tempfile.TemporaryDirectory() as tmp:
+        original_pending = pm.PENDING_DIR
+        original_approved = pm.APPROVED_DIR
+        original_rejected = pm.REJECTED_DIR
+        original_audit = pm.AUDIT_LOG
+        pm.PENDING_DIR = P(tmp) / "pending"
+        pm.APPROVED_DIR = P(tmp) / "approved"
+        pm.REJECTED_DIR = P(tmp) / "rejected"
+        pm.AUDIT_LOG = P(tmp) / "audit" / "repairs.jsonl"
+        pm.PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            with patch("ipracticom_sweeper.pipeline.run_monitor", return_value=warn_memory_snapshot):
+                result = run_pipeline(default_rules, auto_repair=True, dry_run=False)
 
-            result = run_pipeline(default_rules, auto_repair=True, dry_run=False)
-
-    assert result.repairs_attempted == 1
-    assert result.repairs_succeeded == 0
-    assert result.repairs_failed == 1
+            # No execution attempted → no failed counter.
+            assert result.repairs_attempted == 0
+            # But the proposal exists with full problem context for operator review.
+            proposals = list(pm.PENDING_DIR.glob("*.json"))
+            assert len(proposals) == 1
+            proposal = json.loads(proposals[0].read_text())
+            assert proposal["problem"]["kind"] == "memory_warn"
+            assert proposal["problem"]["severity"] == "warn"
+            assert "metrics" in proposal["problem"]
+        finally:
+            pm.PENDING_DIR = original_pending
+            pm.APPROVED_DIR = original_approved
+            pm.REJECTED_DIR = original_rejected
+            pm.AUDIT_LOG = original_audit
 
 
 def test_pipeline_repair_exception_caught(default_rules, warn_memory_snapshot):
-    """If a repair raises, pipeline logs error and continues."""
-    with patch("ipracticom_sweeper.pipeline.run_monitor", return_value=warn_memory_snapshot):
-        with patch("ipracticom_sweeper.pipeline.execute_repair", side_effect=RuntimeError("boom")):
-            result = run_pipeline(default_rules, auto_repair=True, dry_run=False)
+    """v0.4.6 (Daniel #4): With default=needs_approval, drop_caches never calls
+    execute_repair at all, so it can't raise. The proposal is created cleanly.
+    """
+    import tempfile, json
+    from pathlib import Path as P
+    from ipracticom_sweeper.repair import pending as pm
+    with tempfile.TemporaryDirectory() as tmp:
+        original_pending = pm.PENDING_DIR
+        original_approved = pm.APPROVED_DIR
+        original_rejected = pm.REJECTED_DIR
+        original_audit = pm.AUDIT_LOG
+        pm.PENDING_DIR = P(tmp) / "pending"
+        pm.APPROVED_DIR = P(tmp) / "approved"
+        pm.REJECTED_DIR = P(tmp) / "rejected"
+        pm.AUDIT_LOG = P(tmp) / "audit" / "repairs.jsonl"
+        pm.PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            with patch("ipracticom_sweeper.pipeline.run_monitor", return_value=warn_memory_snapshot):
+                with patch("ipracticom_sweeper.pipeline.execute_repair", side_effect=RuntimeError("boom")):
+                    # execute_repair should NOT be called when policy=needs_approval.
+                    # If it raises here, the test would fail — which is what we want,
+                    # because the whole point of the gate is that this code path is
+                    # unreachable for drop_caches now.
+                    result = run_pipeline(default_rules, auto_repair=True, dry_run=False)
 
-    assert result.repairs_attempted == 1
-    assert result.repairs_failed == 1
-    assert any("boom" in e for e in result.errors)
+            # No execution attempted → no failures.
+            assert result.repairs_attempted == 0
+            proposals = list(pm.PENDING_DIR.glob("*.json"))
+            assert len(proposals) == 1
+        finally:
+            pm.PENDING_DIR = original_pending
+            pm.APPROVED_DIR = original_approved
+            pm.REJECTED_DIR = original_rejected
+            pm.AUDIT_LOG = original_audit
 
 
 # --- Green path --------------------------------------------------------------

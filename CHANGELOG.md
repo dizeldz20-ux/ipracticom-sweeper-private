@@ -2,7 +2,31 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.4.5] — 2026-06-30 — Fleet view renders real metrics + English connector prompts
+## [0.4.6] — 2026-06-30 — Approval gate is the new default + rich alerts
+
+### Changed (per Daniel 2026-06-30)
+- **`repair_policy.yaml`: default flipped from `auto` → `needs_approval`**. Daniel: "בשלב זה צריך רק להתריע ולבקש אישור לפני התיקון". All 5 registered repairs (drop_caches, log_truncate_journald, service_restart, top_processes_snapshot, notify_human) now require explicit operator approval via the ✅ Approvals menu before execution. To whitelist a specific repair as auto, uncomment its line in `/etc/ipracticom-sweeper/repair_policy.yaml`.
+- **The 21 monitors under `monitor/` continue to run** (cpu, memory, disk, network, services, ssl, http, kernel_errors, security_baseline, smart, processes, fd, aws, uptime, fd_check, aide_check, iostat, ...). They are unchanged — only the action policy on the 5 repairs changed.
+
+### Added
+- **`format_approvals_list` surfaces the full problem context** (Daniel #5): each pending repair now shows severity emoji (🚨/⚠️/ℹ️), what was detected (`problem.detail`), the metrics that drove the decision (`problem.metrics`), and the exact command to be executed (`proposed_command`). Operator can decide approve/reject without drilling into a separate view.
+
+### Fixed
+- **Pipeline tests updated to reflect the new policy**: drop_caches no longer auto-executes — it creates a pending proposal with the full problem context. `auto_repair=True` still applies, but only to repairs not gated by `needs_approval`.
+
+### Tests
+- **731/731 passing** (+7 new from v0.4.5):
+  - `tests/test_approvals_render.py` — verifies severity emoji, problem.detail, proposed_command, metrics, overflow indicator.
+  - 3 pipeline tests rewritten to assert proposal creation instead of auto-execution.
+
+### Operator workflow (after this change)
+1. Sweeper runs every 5 minutes, scans all 21 monitors.
+2. When a monitor detects an issue, the pipeline calls `notify_human` (which is now itself gated — it sends the alert via the Telegram bot and writes the proposal to disk).
+3. Operator receives a Telegram alert in the ✅ Approvals menu: "🚨 service_restart — זוהה: HTTP probe...503 — תיקון מוצע: systemctl restart nginx".
+4. Operator clicks ✅ Approve or ❌ Reject.
+5. Only after approval does `execute_repair` actually run.
+
+## [0.4.5] — 2026-06-30 — Bot: render real metrics + English connector prompts
 
 ### Fixed
 - **`format_fleet_host` ignored the `extra` block** — the v0.4.4 endpoint was returning the psutil snapshot, but the formatter only printed defcon/problems/last_seen. Operators saw `🖥️ CPU: ❌ (אין נתונים)` on local hosts. v0.4.5 surfaces CPU% (with core count), memory (used/total MB + %), disk (used/total GB + %), network (MB sent/recv), uptime (Xd Yh Zm + booted_at) inline.

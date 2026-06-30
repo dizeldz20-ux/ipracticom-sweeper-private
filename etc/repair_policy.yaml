@@ -1,20 +1,24 @@
 # iPracticom Sweeper — Repair Policy
-# default: 'auto' = safe actions run without approval
-#           'needs_approval' = operator must approve via /approvals UI
+# v0.4.6: default = 'needs_approval' — every repair waits for operator
+# approval via the ✅ Approvals menu in the bot.
 #
-# Auto-execute (safe, reversible, no service impact):
-#   - drop_caches:         frees page cache, never destructive
-#   - log_truncate_journald: rotates journald, frees disk
-#   - top_processes_snapshot: read-only diagnostic
-#   - notify_human:        just sends a webhook
+# Per Daniel 2026-06-30: "בשלב זה צריך רק להתריע ולבקש אישור לפני התיקון"
+# (only alert + ask for approval before any fix).
 #
-# Needs approval (service-affecting):
-#   - service_restart:    could cause downtime if service won't come back
+# 21 collectors under monitor/ feed into the pipeline (cpu, memory, disk,
+# network, services, ssl, http, kernel_errors, security_baseline, smart,
+# processes, fd, aws, uptime, fd_check, aide_check, iostat, ...). Each
+# collector can propose any of the 5 registered repairs:
+#   drop_caches, log_truncate_journald, service_restart,
+#   top_processes_snapshot, notify_human
+#
+# Every repair requires explicit operator approval before execution.
+# Per-repair overrides below — all commented out so the default wins.
 
-default: auto
+default: needs_approval
 repairs:
-  drop_caches: auto
-  log_truncate_journald: auto
-  top_processes_snapshot: auto
-  notify_human: auto
-  service_restart: needs_approval
+  # drop_caches: auto  # ← uncomment to whitelist page cache drops
+  # log_truncate_journald: auto  # ← uncomment to whitelist journald vacuum
+  # top_processes_snapshot: auto  # ← read-only diagnostic, safe to whitelist
+  # notify_human: auto  # ← sends alert to Slack/Telegram (safe)
+  # service_restart: needs_approval  # ← always approval (could cause downtime)
