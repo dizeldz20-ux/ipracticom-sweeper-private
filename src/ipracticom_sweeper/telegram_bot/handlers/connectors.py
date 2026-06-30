@@ -48,15 +48,41 @@ def _agent(context) -> AgentClient:
 # ---------- menu:connectors ----------
 
 async def connectors(update, context) -> dict[str, Any]:
-    """List every connector with its status emoji."""
+    """List every connector with its status emoji.
+
+    v0.4.3: Connectors are remote AWS instances the sweeper monitors
+    via SSM. If you didn't add any, the seed list is just example
+    data (clearly marked) — you can delete them with the 🗑️ button.
+    """
     try:
         data = await _agent(context).list_fleet()
     except AgentAPIError as e:
         return {"text": format_error(str(e)), "reply_markup": back_to_main()}
 
     connectors_list = [h for h in (data.get("hosts") or []) if h.get("kind") == "connector"]
+
+    # v0.4.3: header now explains what a connector is + how to recognize
+    # the seed data. Without this, operators see "3 connectors" and
+    # think they accidentally added servers they never set up.
+    header = (
+        "🔌 <b>מחברים (SSM)</b>\n"
+        "<i>שרתים מרוחקים שהסוכן אוסף מהם נתונים דרך AWS SSM.</i>\n"
+    )
+    if connectors_list:
+        # Any connector with last_error = SSM error → likely seed data
+        # (real configs would have last_collected_at populated).
+        all_seed = all(c.get("last_error") and not c.get("last_collected_at") for c in connectors_list)
+        if all_seed:
+            header += (
+                "\n⚠️ <b>כל הרשומות נראות כמו seed data</b> "
+                "(שגיאת SSM, לא נאסף מעולם).\n"
+                "<i>לחץ על כל אחד → 🗑️ מחק כדי להסיר.</i>\n"
+            )
+    header += "\n"
+
+    body = format_connectors_list(connectors_list)
     return {
-        "text": format_connectors_list(connectors_list),
+        "text": header + body,
         "reply_markup": connectors_menu(connectors_list),
     }
 
@@ -145,16 +171,39 @@ async def connector_delete_confirm(update, context) -> dict[str, Any]:
         return {"text": "❌ שם מחבר חסר", "reply_markup": back_to_main()}
     agent = _agent(context)
     try:
-        # agent_client has no DELETE wrapper yet — use raw _request.
-        await agent._http.delete(  # type: ignore[attr-defined]
+        resp = await agent._http.delete(  # type: ignore[attr-defined]
             agent._url(f"/api/connectors/{name}"),  # type: ignore[attr-defined]
             headers=agent._headers(),  # type: ignore[attr-defined]
         )
     except Exception as e:
         return {"text": format_error(str(e)), "reply_markup": connector_actions_kb(name)}
 
-    # Refresh the list view.
-    return await connectors(update, context)
+    if resp.status_code == 404:
+        # Already gone — show a friendly "already deleted" + refresh.
+        return {
+            "text": f"ℹ️ <code>{name}</code> כבר לא היה קיים.",
+            "reply_markup": InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ חזור למחברים", callback_data="menu:connectors")],
+            ]),
+        }
+    if resp.status_code not in (200, 204):
+        return {
+            "text": f"❌ מחיקה נכשלה: HTTP {resp.status_code}\n<i>{(resp.text or '')[:200]}</i>",
+            "reply_markup": connector_actions_kb(name),
+        }
+
+    # Successfully deleted. Acknowledge via toast and refresh the list.
+    if cq is not None:
+        try:
+            await cq.answer(f"🗑️ {name} נמחק")
+        except Exception:
+            pass
+    return {
+        "text": f"✅ מחבר <b>{name}</b> הוסר.",
+        "reply_markup": InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ חזור למחברים", callback_data="menu:connectors")],
+        ]),
+    }
 
 
 # ---------- conn:add / conn:edit:<name> ----------

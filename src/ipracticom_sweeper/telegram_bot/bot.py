@@ -50,13 +50,19 @@ from ipracticom_sweeper.telegram_bot.handlers import (
 log = logging.getLogger(__name__)
 
 
-async def _send_result(target, result: dict) -> None:
+async def _send_result(target, result: dict | None) -> None:
     """Send a handler result dict via the right Telegram method.
 
     `target` is either `update.message` or `update.callback_query`. We
     edit the message if it's a callback (so the inline keyboard updates
     in place) or send a new message if it's a command.
+
+    `result` may be None — the handler already sent a document/reply
+    and wants the dispatcher to stay silent. We just return.
     """
+    if result is None:
+        return
+
     text = result.get("text", "")
     reply_markup = result.get("reply_markup")
     parse_mode = ParseMode.HTML
@@ -236,19 +242,21 @@ def build_application() -> Application:
         _on_callback_sync(fleet_handler.fleet_host),
         pattern=r"^fleet:host:[A-Za-z0-9_-]+$",
     ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(fleet_handler.fleet_logs),
+        pattern=r"^fleet:logs:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(fleet_handler.fleet_download),
+        pattern=r"^fleet:download:[A-Za-z0-9_-]+$",
+    ))
 
-    # Settings section
+    # Settings section — v0.4.3: only the Telegram test remains.
     app.add_handler(CallbackQueryHandler(
         _on_callback_sync(settings_handler.settings), pattern=r"^menu:settings$"
     ))
     app.add_handler(CallbackQueryHandler(
-        _on_callback_sync(settings_handler.test_api), pattern=r"^set:test:api$"
-    ))
-    app.add_handler(CallbackQueryHandler(
         _on_callback_sync(settings_handler.test_tg), pattern=r"^set:test:tg$"
-    ))
-    app.add_handler(CallbackQueryHandler(
-        _on_callback_sync(settings_handler.test_slack), pattern=r"^set:test:slack$"
     ))
 
     # Catch-all unauthorized/unknown → silent log

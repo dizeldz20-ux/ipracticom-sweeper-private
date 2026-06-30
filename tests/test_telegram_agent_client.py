@@ -216,3 +216,53 @@ async def test_no_token_omits_authorization_header():
         assert "authorization" not in {k.lower() for k in t.calls[0].headers.keys()}
     finally:
         await c.aclose()
+
+
+# ---------------------------- v0.4.3 logs ----------------------------
+
+@pytest.mark.asyncio
+async def test_get_logs_passes_tail_param():
+    t = _MockTransport([(200, {"available": True, "count": 1, "logs": []})])
+    c = _client(t)
+    try:
+        out = await c.get_logs(tail=100)
+        assert out["count"] == 1
+        # Verify the tail param was sent
+        assert "tail=100" in str(t.calls[0].url)
+    finally:
+        await c.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_logs_default_tail():
+    t = _MockTransport([(200, {"available": True, "count": 0, "logs": []})])
+    c = _client(t)
+    try:
+        await c.get_logs()
+        assert "tail=50" in str(t.calls[0].url)
+    finally:
+        await c.aclose()
+
+
+def test_get_logs_download_url_includes_token():
+    c = AgentClient(base_url="http://agent.test", token="mysecret")
+    url = c.get_logs_download_url(name="all")
+    assert url.startswith("http://agent.test/api/logs/download?")
+    assert "name=all" in url
+    # Token is included as ?t= so the URL stays short
+    assert "t=mysecret" in url
+
+
+def test_get_logs_download_url_without_token():
+    c = AgentClient(base_url="http://agent.test", token="")
+    url = c.get_logs_download_url(name="repairs")
+    assert url == "http://agent.test/api/logs/download?name=repairs"
+    assert "t=" not in url
+
+
+def test_get_logs_download_url_specific_name():
+    c = AgentClient(base_url="https://api.example.com", token="x")
+    url = c.get_logs_download_url(name="monitor")
+    assert "name=monitor" in url
+    # Test that the URL is well-formed even with https
+    assert url.startswith("https://api.example.com/api/logs/download?")

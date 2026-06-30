@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import json
 import os
+import time
 from datetime import datetime, timezone
 from functools import wraps
 from typing import Any
@@ -146,6 +148,196 @@ def create_app() -> Flask:
         except FileNotFoundError:
             return jsonify({"error": "no audit log yet", "events": []}), 200
         return jsonify({"events": events, "count": len(events)})
+
+    # --- Logs (v0.4.3) ----------------------------------------------------
+    # v0.4.3: surface every audit log the agent has, in JSON form, so the
+    # Telegram bot can show them to the operator. Separate endpoint for
+    # download so the bot can attach the file directly (Telegram has a
+    # 4096-char message limit; we want the option to send the whole log).
+    @app.route("/api/logs", methods=["GET"])
+    @require_auth
+    def api_logs():
+        """List + tail every available audit log.
+
+        Returns:
+          logs: [
+            {name, kind, path, size_bytes, line_count, tail: [last N lines parsed]}
+          ]
+          available: bool (false if the state dir is missing)
+        """
+        from pathlib import Path
+
+        try:
+            state_dir = Path(os.environ.get(
+                "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+            ))
+        except Exception:
+            return jsonify({"logs": [], "available": False}), 200
+
+        if not state_dir.exists():
+            return jsonify({"logs": [], "available": False, "note": "no state dir"}), 200
+
+        # Build a list of well-known logs. Anything missing is silently
+        # skipped — operator can still see what's there.
+        candidates = [
+            ("repairs", state_dir / "audit" / "repairs.jsonl", "jsonl"),
+            ("monitor", state_dir / "audit" / "monitor.jsonl", "jsonl"),
+            ("heartbeat", state_dir / "heartbeat.json", "json"),
+            ("last_result", state_dir / "cache" / "last-result.json", "json"),
+        ]
+
+        try:
+            tail_n = min(int(request.args.get("tail", "50")), 500)
+        except ValueError:
+            tail_n = 50
+
+        logs: list[dict[str, Any]] = []
+        for name, path, kind in candidates:
+            if not path.exists():
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+
+            tail: list[Any] = []
+            line_count = 0
+            try:
+                if kind == "jsonl":
+                    # Read last N lines, parse each as JSON.
+                    # For very large files, this is O(N); we cap at tail_n.
+                    with open(path) as f:
+                        # Cheap line count by reading whole file once.
+                        # For 100MB logs this would be slow — but our logs
+                        # are small (< 10MB even after months).
+                        all_lines = f.readlines()
+                    line_count = len(all_lines)
+                    for line in all_lines[-tail_n:]:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            tail.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            tail.append({"_raw": line[:500]})
+                else:  # json
+                    import json as _json
+                    with open(path) as f:
+                        data = _json.load(f)
+                    # For JSON files, "tail" is a single element with the
+                    # full content (operator can drill in via the bot UI).
+                    tail = [data]
+                    line_count = 1
+            except (OSError, json.JSONDecodeError) as e:
+                logs.append({
+                    "name": name, "kind": kind, "path": str(path),
+                    "size_bytes": size, "line_count": 0,
+                    "tail": [], "error": str(e),
+                })
+                continue
+
+            logs.append({
+                "name": name,
+                "kind": kind,
+                "path": str(path),
+                "size_bytes": size,
+                "line_count": line_count,
+                "tail_count": len(tail),
+                "tail": tail,
+            })
+
+        return jsonify({
+            "available": True,
+            "count": len(logs),
+            "logs": logs,
+        })
+
+    @app.route("/api/logs/download", methods=["GET"])
+    @require_auth
+    def api_logs_download():
+        """Return one log as a single concatenated text file.
+
+        Query params:
+          name: log name (e.g. "repairs", "monitor", "last_result")
+                     default: "all" — returns every available log concatenated
+          max_bytes: cap output size (default 5MB, max 50MB)
+        """
+        from pathlib import Path
+        from flask import Response
+
+        try:
+            max_bytes = min(int(request.args.get("max_bytes", str(5 * 1024 * 1024))), 50 * 1024 * 1024)
+        except ValueError:
+            max_bytes = 5 * 1024 * 1024
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+
+        name = (request.args.get("name") or "all").strip()
+
+        if name == "all":
+            # Concatenate every available log with separators.
+            parts: list[str] = []
+            for log_name, log_path, log_kind in [
+                ("repairs", state_dir / "audit" / "repairs.jsonl", "jsonl"),
+                ("monitor", state_dir / "audit" / "monitor.jsonl", "jsonl"),
+                ("heartbeat", state_dir / "heartbeat.json", "json"),
+                ("last_result", state_dir / "cache" / "last-result.json", "json"),
+            ]:
+                if not log_path.exists():
+                    continue
+                try:
+                    with open(log_path) as f:
+                        content = f.read()
+                except OSError as e:
+                    parts.append(f"=== {log_name} ({log_path}): read error: {e} ===\n")
+                    continue
+                parts.append(
+                    f"=== {log_name} ({log_path}, {log_kind}, {len(content)} bytes) ===\n"
+                    f"{content}\n"
+                )
+            body = "".join(parts).encode("utf-8")
+            filename = f"sweeper-logs-{int(time.time())}.txt"
+        else:
+            # Map friendly name → file path.
+            table = {
+                "repairs": state_dir / "audit" / "repairs.jsonl",
+                "monitor": state_dir / "audit" / "monitor.jsonl",
+                "heartbeat": state_dir / "heartbeat.json",
+                "last_result": state_dir / "cache" / "last-result.json",
+                "last-result": state_dir / "cache" / "last-result.json",
+            }
+            path = table.get(name)
+            if path is None or not path.exists():
+                return jsonify({"error": f"unknown or missing log: {name}"}), 404
+            try:
+                body = path.read_bytes()
+            except OSError as e:
+                return jsonify({"error": str(e)}), 500
+            filename = f"sweeper-{name}-{int(time.time())}.{path.suffix.lstrip('.') or 'txt'}"
+
+        # Cap size — if we'd exceed, truncate and note it in the trailer.
+        truncated = False
+        if len(body) > max_bytes:
+            body = body[:max_bytes]
+            truncated = True
+
+        # Prepend a header if we truncated.
+        if truncated:
+            body = (
+                f"# truncated to {max_bytes} bytes (use ?max_bytes=N to increase, max 50MB)\n"
+                .encode("utf-8") + body
+            )
+
+        return Response(
+            body,
+            mimetype="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-Sweeper-Truncated": "1" if truncated else "0",
+            },
+        )
 
     # --- Run trigger -------------------------------------------------------
 

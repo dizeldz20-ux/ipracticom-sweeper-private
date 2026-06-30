@@ -2,6 +2,32 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.3] — 2026-06-30 — Bot Polish + Logs
+
+### Changed (per user feedback 2026-06-29)
+- **Settings**: only the Telegram connectivity test remains. Removed Slack/API/identity buttons — they were either operator-level concerns or duplicate info.
+- **Connectors**: header now explains what a connector is + flags seed data explicitly. Operators no longer see "3 connectors" and wonder if they accidentally added servers.
+- **Connector delete**: properly checks `resp.status_code` and surfaces 404/500/connection errors instead of silently "refreshing" the list.
+- **pyproject.toml** → 0.4.3
+
+### Added
+- **2 new agent_api endpoints**:
+  - `GET /api/logs` — list every available audit log with its tail (repairs/monitor/heartbeat/last_result)
+  - `GET /api/logs/download?name=...` — download a single log (or all) as a text file with truncation cap
+- **2 new agent_client methods**: `get_logs(tail=50)`, `get_logs_download_url(name="all")`
+- **Fleet host detail** now shows live CPU/זיכרון/דיסק/רשת from the latest snapshot (local host only)
+- **2 new buttons per host**: "📜 הצג לוגים" (inline tail) + "⬇️ הורד לוג כקובץ" (Telegram document)
+- **Fleet download** handler fetches the log from agent_api and sends it as a `reply_document` to the calling user
+- **`_send_result(None)`** — dispatcher now supports handlers that already sent a reply (e.g. document upload) and want the dispatcher to stay silent
+
+### Tests
+- **705/705 passing** (was 669 in v0.4.2, +36 new)
+- `test_agent_api_logs.py` — 12 tests (catalog, download, truncation, auth, 404)
+- `test_telegram_handlers_fleet.py` — 9 tests (host view, live metrics, log tail, format helper)
+- `test_telegram_handlers_settings.py` — 3 tests (menu, test_tg, error path)
+- `test_telegram_handlers_connectors.py` — 5 tests (seed detection, delete 200/404/500/network)
+- `test_telegram_agent_client.py` — 5 new tests for the 2 new methods (tail param, URL with/without token)
+
 ## [0.4.2] — 2026-06-29 — Telegram Bot Dashboard Parity
 
 ### Added

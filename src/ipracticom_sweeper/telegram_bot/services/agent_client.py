@@ -150,6 +150,31 @@ class AgentClient:
         """POST /api/run — trigger a fresh sweep, return the new snapshot."""
         return await self._post("/api/run")
 
+    async def get_logs(self, tail: int = 50) -> dict:
+        """GET /api/logs?tail=N — list every available log with its tail.
+
+        Returns the envelope: {available, count, logs: [{name, kind, path,
+        size_bytes, line_count, tail_count, tail: [...]}, ...]}.
+        """
+        return await self._get("/api/logs", params={"tail": tail})
+
+    def get_logs_download_url(self, name: str = "all") -> str:
+        """Build a URL the bot can fetch directly to download a log file.
+
+        We return the URL (not the content) because the bot attaches it
+        as a Telegram document — the file is too big to inline.
+
+        The token is included as a query param because Telegram's
+        document-upload helper uses simple HTTP fetches that don't
+        support custom headers.
+        """
+        from urllib.parse import urlencode
+        params: dict[str, str] = {"name": name}
+        if self._token:
+            params["t"] = self._token  # short alias to keep URL readable
+        qs = urlencode(params)
+        return f"{self._base_url}/api/logs/download?{qs}"
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._http.aclose()
