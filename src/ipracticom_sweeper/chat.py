@@ -118,32 +118,32 @@ def get_rag() -> "RAGStore":
 def _compose_assistant_reply(content: str,
                              rag_top_k: int = 2,
                              max_chars: int = 600) -> str:
-    """Build the assistant acknowledgement for slice 3.2 (RAG-augmented stub).
+    """Build the assistant acknowledgement for slice 3.3 (LLM router).
 
-    The real LLM reply will replace this in slice 3.3; for now we surface
-    the top retrieval hits so the UI proves the wiring works end-to-end.
+    Hits the global LLM router (mock by default; OpenAI/Anthropic when
+    the matching API key is in env). The router decides whether to call
+    tools and emits a final text reply; we surface that to the chat
+    store as the assistant message.
     """
+    from ipracticom_sweeper.chat_llm import LLMRouter
     rag = get_rag()
     hits = rag.query(content, top_k=rag_top_k)
-    base = f"(תשובת סטאב — slice 3.3 יוסיף LLM) קיבלתי: {content[:120]}"
-    if not hits:
-        return base
-    snippet_lines = []
-    used = len(base)
-    for h in hits:
-        snippet = h.text.strip().replace("\n", " ")
-        if len(snippet) > 200:
-            snippet = snippet[:197] + "..."
-        line = f"• {h.doc_id}: {snippet}"
-        if used + len(line) + 1 > max_chars:
-            remaining = max_chars - used
-            if remaining <= 0:
-                break
-            snippet_lines.append(line[:max(0, remaining - 3)] + "...")
-            break
-        snippet_lines.append(line)
-        used += len(line) + 1
-    return base + "\n[RAG]\n" + "\n".join(snippet_lines)
+    reply = LLMRouter().reply(content, hits)
+    base = reply.text or ""
+    # Append a compact tool-call summary for transparency in the UI.
+    if reply.tool_calls:
+        tc_lines = ["[tools]"]
+        for tc in reply.tool_calls:
+            name = tc.get("name", "?")
+            args = tc.get("arguments") or {}
+            args_str = ", ".join(f"{k}={v}" for k, v in args.items())
+            tc_lines.append(f"• {name}({args_str})")
+        # Truncate base reply first if total would overflow.
+        tool_block = "\n".join(tc_lines)
+        if len(base) + len(tool_block) + 1 > max_chars:
+            base = base[:max(0, max_chars - len(tool_block) - 4)] + "...\n"
+        return base + "\n" + tool_block
+    return base
 
 
 def _now_ms() -> int:
@@ -337,10 +337,17 @@ def register_chat_routes(app: Any) -> None:
                     sid, "assistant",
                     _compose_assistant_reply(content)
                 )
+                from ipracticom_sweeper.chat_llm import LLMRouter
+                _router = LLMRouter()
+                _rag = get_rag()
+                _hits = _rag.query(content, top_k=2)
+                _reply = _router.reply(content, _hits)
                 ws.send(json.dumps(
                     {"user": user_msg.as_dict(),
                      "assistant": ack_msg.as_dict() if ack_msg else None,
-                     "rag_hits": [h.as_dict() for h in get_rag().query(content, top_k=2)]},
+                     "rag_hits": [h.as_dict() for h in _hits],
+                     "llm_mode": _reply.mode,
+                     "tool_calls": _reply.tool_calls},
                     ensure_ascii=False,
                 ))
         except Exception as exc:  # pragma: no cover -- runtime WS errors
