@@ -1,4 +1,4 @@
-"""Tests for telegram_bot handlers.
+"""Tests for telegram_bot handlers (v0.4.2).
 
 Each handler is a thin async function: takes (update, context) like
 python-telegram-bot, uses the bot_data['agent'] to talk to agent_api,
@@ -7,24 +7,41 @@ formats the response, and replies.
 We test the handler's *return value* (a dict describing what to send)
 rather than mocking the entire Telegram API. This keeps tests fast and
 focused on the contract.
+
+In v0.4.2 handlers are split across modules under
+`ipracticom_sweeper.telegram_bot.handlers`. v0.4.1's flat handlers.py
+exported {start, status, problems, history, security}; in v0.4.2:
+  - start     → handlers.dashboard.start
+  - status    → handlers.dashboard.dashboard (renamed; takes a snapshot
+                and shows DEFCON + run-now)
+  - problems  → merged into dashboard.dashboard (active problems shown
+                together with DEFCON)
+  - history   → handlers.history.history (now uses the catalog
+                endpoint; range drill-down lives in handlers.history)
+  - security  → still uses /api/snapshot's security_baseline module;
+                we test the formatter directly in test_telegram_formatter
+
+We import the v0.4.2 names so the tests survive the refactor.
 """
 import pytest
 from types import SimpleNamespace
 
 from ipracticom_sweeper.telegram_bot.config import BotConfig
 from ipracticom_sweeper.telegram_bot.services.agent_client import AgentAPIError
-from ipracticom_sweeper.telegram_bot.handlers import start, status, problems, history, security
+from ipracticom_sweeper.telegram_bot.handlers.dashboard import start, dashboard
+from ipracticom_sweeper.telegram_bot.handlers.history import history as history_handler
 
 
 # ---------- fakes ----------
 
-def _update(chat_id: int = 42, callback_data: str | None = None):
+def _update(chat_id: int = 42, callback_data: str | None = None, text: str | None = None):
     """Build a fake Update-like object with the right shape."""
     chat = SimpleNamespace(id=chat_id)
+    message = SimpleNamespace(text=text) if text is not None else None
     if callback_data is None:
-        return SimpleNamespace(effective_chat=chat, message=None, callback_query=None)
+        return SimpleNamespace(effective_chat=chat, message=message, callback_query=None)
     cq = SimpleNamespace(data=callback_data, from_user=SimpleNamespace(id=chat_id), message=None)
-    return SimpleNamespace(effective_chat=chat, callback_query=cq, message=None)
+    return SimpleNamespace(effective_chat=chat, callback_query=cq, message=message)
 
 
 def _ctx(cfg: BotConfig, agent):
@@ -35,154 +52,104 @@ def _ctx(cfg: BotConfig, agent):
 # ---------- start ----------
 
 @pytest.mark.asyncio
-async def test_start_returns_welcome():
-    """start handler returns welcome text + main menu keyboard."""
+async def test_start_returns_welcome_with_six_section_menu():
+    """v0.4.2 /start shows 6-section menu (full_menu)."""
     cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
     ctx = _ctx(cfg, agent=None)
     update = _update(chat_id=42)
     result = await start(update, ctx)
     assert "ברוך הבא" in result["text"] or "sweeper" in result["text"].lower()
     assert "reply_markup" in result
+    # Verify 6 sections are present
+    cbs = [
+        btn.callback_data
+        for row in result["reply_markup"].inline_keyboard
+        for btn in row
+    ]
+    for required in ("menu:dashboard", "menu:history", "menu:approvals",
+                     "menu:connectors", "menu:fleet", "menu:settings"):
+        assert required in cbs, f"missing v0.4.2 section: {required}"
 
 
-# ---------- status ----------
+# ---------- dashboard ----------
 
 @pytest.mark.asyncio
-async def test_status_uses_snapshot():
-    """status handler pulls /api/snapshot and formats it."""
-
+async def test_dashboard_uses_snapshot():
+    """dashboard handler pulls /api/snapshot and shows DEFCON + run-now."""
     class FakeAgent:
         async def get_snapshot(self):
             return {"defcon": 3, "modules": {"cpu": {"status": "ok"}}}
 
     cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
     ctx = _ctx(cfg, FakeAgent())
-    update = _update(chat_id=42, callback_data="menu:status")
-    result = await status(update, ctx)
+    update = _update(chat_id=42, callback_data="menu:dashboard")
+    result = await dashboard(update, ctx)
     assert "DEFCON 3" in result["text"]
+    # Has run-now button
+    cbs = [
+        btn.callback_data
+        for row in result["reply_markup"].inline_keyboard
+        for btn in row
+    ]
+    assert "dash:run_now" in cbs
 
 
 @pytest.mark.asyncio
-async def test_status_handles_agent_error():
-    """status handler returns Hebrew error when agent_api is down."""
-
+async def test_dashboard_handles_agent_error():
+    """dashboard handler returns Hebrew error when agent_api is down."""
     class BrokenAgent:
         async def get_snapshot(self):
             raise AgentAPIError(503, "service unavailable")
 
     cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
     ctx = _ctx(cfg, BrokenAgent())
-    update = _update(chat_id=42, callback_data="menu:status")
-    result = await status(update, ctx)
+    update = _update(chat_id=42, callback_data="menu:dashboard")
+    result = await dashboard(update, ctx)
     assert "שגיאה" in result["text"] or "error" in result["text"].lower()
 
 
-# ---------- problems ----------
+# ---------- history (v0.4.2 catalog-based) ----------
 
 @pytest.mark.asyncio
-async def test_problems_lists_active():
-    """problems handler lists warn/crit modules only."""
+async def test_history_lists_metrics_from_catalog():
+    """history handler reads /api/history (catalog) and lists metrics."""
 
     class FakeAgent:
-        async def get_snapshot(self):
+        async def get_history_catalog(self):
             return {
-                "defcon": 2,
-                "modules": {
-                    "cpu": {"status": "ok"},
-                    "disk": {"status": "warn", "details": "85% full"},
-                    "memory": {"status": "crit", "details": "OOM risk"},
-                },
+                "metrics": ["defcon", "cpu_percent"],
+                "hosts": ["localhost"],
+                "metrics_with_counts": [
+                    {"metric": "defcon", "count": 50},
+                    {"metric": "cpu_percent", "count": 1440},
+                ],
+                "hosts_with_counts": [],
             }
 
     cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
     ctx = _ctx(cfg, FakeAgent())
-    update = _update(chat_id=42, callback_data="menu:problems")
-    result = await problems(update, ctx)
-    assert "85% full" in result["text"]
-    assert "OOM risk" in result["text"]
+    update = _update(chat_id=42, callback_data="menu:history")
+    result = await history_handler(update, ctx)
+    assert "defcon" in result["text"]
+    assert "cpu_percent" in result["text"]
+    # Drill-down buttons present
+    cbs = [
+        btn.callback_data
+        for row in result["reply_markup"].inline_keyboard
+        for btn in row
+    ]
+    assert any(cb and cb.startswith("hist:metric:") for cb in cbs)
 
 
 @pytest.mark.asyncio
-async def test_problems_clean_state():
-    """problems handler says 'all good' when no issues."""
-
+async def test_history_empty_catalog():
+    """history handler handles empty catalog gracefully."""
     class FakeAgent:
-        async def get_snapshot(self):
-            return {"defcon": 5, "modules": {"cpu": {"status": "ok"}}}
+        async def get_history_catalog(self):
+            return {"metrics": [], "hosts": []}
 
     cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
     ctx = _ctx(cfg, FakeAgent())
-    update = _update(chat_id=42, callback_data="menu:problems")
-    result = await problems(update, ctx)
-    assert "אין בעיות" in result["text"] or "✅" in result["text"]
-
-
-# ---------- history ----------
-
-@pytest.mark.asyncio
-async def test_history_for_metric():
-    """history handler calls /api/history/{metric} with the right arg."""
-
-    captured = {}
-
-    class FakeAgent:
-        async def get_history(self, metric, hours=24):
-            captured["metric"] = metric
-            captured["hours"] = hours
-            return [
-                {"ts": 1700000000, "value": 3.0},
-                {"ts": 1700003600, "value": 4.0},
-            ]
-
-    cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
-    ctx = _ctx(cfg, FakeAgent())
-    update = _update(chat_id=42, callback_data="hist:defcon")
-    result = await history(update, ctx)
-    assert captured["metric"] == "defcon"
-    assert "defcon" in result["text"].lower()
-    assert "2" in result["text"]  # 2 samples
-
-
-@pytest.mark.asyncio
-async def test_history_empty_data():
-    """history handler handles empty history gracefully."""
-
-    class FakeAgent:
-        async def get_history(self, metric, hours=24):
-            return []
-
-    cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
-    ctx = _ctx(cfg, FakeAgent())
-    update = _update(chat_id=42, callback_data="hist:cpu_percent")
-    result = await history(update, ctx)
-    assert "אין נתונים" in result["text"] or "no data" in result["text"].lower()
-
-
-# ---------- security ----------
-
-@pytest.mark.asyncio
-async def test_security_renders_report():
-    """security handler renders a security-baseline report."""
-
-    class FakeAgent:
-        async def get_snapshot(self):
-            return {
-                "defcon": 4,
-                "modules": {
-                    "security_baseline": {
-                        "status": "ok",
-                        "details": {
-                            "ssh_drift": [],
-                            "suid_changes": ["/usr/bin/new_suid"],
-                            "ports": [{"port": 22, "service": "ssh"}],
-                        },
-                    }
-                },
-            }
-
-    cfg = BotConfig(bot_token="t", allowed_chat_ids={42})
-    ctx = _ctx(cfg, FakeAgent())
-    update = _update(chat_id=42, callback_data="menu:security")
-    result = await security(update, ctx)
-    assert "SSH" in result["text"]
-    assert "SUID" in result["text"] or "suid" in result["text"].lower()
+    update = _update(chat_id=42, callback_data="menu:history")
+    result = await history_handler(update, ctx)
+    assert "אין מטריקות" in result["text"]

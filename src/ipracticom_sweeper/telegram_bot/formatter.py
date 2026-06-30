@@ -169,3 +169,151 @@ def format_error(reason: str = "") -> str:
     """Generic Hebrew error for user-facing messages."""
     suffix = f"\n<i>{escape_html(reason)}</i>" if reason else ""
     return f"❌ <b>שגיאה</b> — לא הצלחתי להביא נתונים{suffix}"
+
+
+# ---------------------------- v0.4.2 formatters ----------------------------
+
+def format_dashboard(snap: dict) -> str:
+    """Dashboard view: DEFCON + problems summary + run-now button.
+
+    Output is identical to format_snapshot() but explicitly named so
+    the dashboard handler has a clear intent.
+    """
+    return format_snapshot(snap)
+
+
+def format_history_catalog(catalog: dict) -> str:
+    """History overview: list metrics with sample counts."""
+    metrics = catalog.get("metrics") or []
+    hosts = catalog.get("hosts") or []
+    if not metrics:
+        return "📚 <b>היסטוריה</b>\n<i>אין מטריקות במאגר עדיין</i>"
+
+    lines: list[str] = ["📚 <b>היסטוריה — מטריקות</b>", ""]
+    lines.append(f"<i>{len(metrics)} מטריקות | {len(hosts)} מארחים</i>")
+    lines.append("")
+    for m in metrics[:20]:
+        lines.append(f"  • <code>{escape_html(str(m))}</code>")
+    if len(metrics) > 20:
+        lines.append(f"  <i>...+{len(metrics) - 20} more</i>")
+    return "\n".join(lines)
+
+
+def format_approvals_list(pending: list[dict]) -> str:
+    """Approvals overview: list of pending repair proposals."""
+    if not pending:
+        return "✅ <b>אין תיקונים הממתינים לאישור</b>\n<i>המערכת יציבה</i>"
+
+    lines: list[str] = [f"📋 <b>{len(pending)} תיקונים ממתינים</b>", ""]
+    for p in pending[:8]:
+        pid = str(p.get("id", "?"))[:8]
+        action = str(p.get("action", "?"))
+        reason = str(p.get("reason", ""))
+        lines.append(f"  • <code>{pid}</code> <b>{escape_html(action)}</b>")
+        if reason:
+            lines.append(f"    <i>{escape_html(reason[:80])}</i>")
+    if len(pending) > 8:
+        lines.append(f"  <i>...+{len(pending) - 8} more</i>")
+    return "\n".join(lines)
+
+
+def format_approval_result(result: dict) -> str:
+    """Result of approve/reject: Hebrew confirmation."""
+    ok = bool(result.get("ok", False))
+    status = result.get("status", "?")
+    if ok:
+        emoji = "✅"
+        verb = "בוצע בהצלחה"
+    else:
+        emoji = "❌"
+        verb = "נכשל"
+    msg = result.get("message") or result.get("error") or ""
+    lines: list[str] = [f"{emoji} <b>תיקון {verb}</b>  [{escape_html(status)}]"]
+    if msg:
+        lines.append(f"<i>{escape_html(str(msg)[:200])}</i>")
+    return "\n".join(lines)
+
+
+def format_connectors_list(connectors: list[dict]) -> str:
+    """Connectors overview: list with status emoji."""
+    if not connectors:
+        return "🔌 <b>מחברים</b>\n<i>אין מחברים מוגדרים. לחץ 'הוסף מחבר' כדי להתחיל.</i>"
+
+    lines: list[str] = [f"🔌 <b>מחברים ({len(connectors)})</b>", ""]
+    for c in connectors[:15]:
+        name = str(c.get("name", "?"))
+        iid = str(c.get("instance_id", "?"))
+        region = str(c.get("region", "?"))
+        status = c.get("status", "unknown")
+        emoji = "✅" if status == "ok" else ("❌" if status == "error" else "❓")
+        lines.append(f"  {emoji} <b>{escape_html(name)}</b> — <code>{escape_html(iid)}</code> ({escape_html(region)})")
+    if len(connectors) > 15:
+        lines.append(f"  <i>...+{len(connectors) - 15} more</i>")
+    return "\n".join(lines)
+
+
+def format_connector_detail(c: dict) -> str:
+    """Per-connector detail view."""
+    name = str(c.get("name", "?"))
+    iid = str(c.get("instance_id", "?"))
+    region = str(c.get("region", "?"))
+    status = c.get("status", "unknown")
+    tags = c.get("tags") or {}
+    last_collected = c.get("last_collected_at")
+    last_error = c.get("last_error")
+
+    lines: list[str] = [f"🔌 <b>{escape_html(name)}</b>", ""]
+    lines.append(f"  instance: <code>{escape_html(iid)}</code>")
+    lines.append(f"  region: <code>{escape_html(region)}</code>")
+    lines.append(f"  status: <b>{escape_html(str(status))}</b>")
+    if last_collected:
+        lines.append(f"  last_collected: <code>{escape_html(str(last_collected))}</code>")
+    if last_error:
+        lines.append(f"  last_error: <i>{escape_html(str(last_error)[:120])}</i>")
+    if tags:
+        tag_str = ", ".join(f"{k}={v}" for k, v in tags.items())
+        lines.append(f"  tags: <i>{escape_html(tag_str)}</i>")
+    return "\n".join(lines)
+
+
+def format_fleet_list(hosts: list[dict]) -> str:
+    """Fleet overview: every host with status."""
+    if not hosts:
+        return "🖥️ <b>צי</b>\n<i>אין מארחים</i>"
+
+    lines: list[str] = [f"🖥️ <b>צי ({len(hosts)} מארחים)</b>", ""]
+    for h in hosts[:15]:
+        name = str(h.get("name", "?"))
+        status = h.get("status", "unknown")
+        kind = h.get("kind", "?")
+        emoji = "✅" if status == "ok" else ("⚠️" if status == "warn" else (
+            "🚨" if status == "crit" else "❓"
+        ))
+        lines.append(f"  {emoji} <b>{escape_html(name)}</b> <i>({escape_html(kind)})</i>")
+    if len(hosts) > 15:
+        lines.append(f"  <i>...+{len(hosts) - 15} more</i>")
+    return "\n".join(lines)
+
+
+def format_fleet_host(host: dict) -> str:
+    """Per-host detail view (local reads heartbeat, connectors read config)."""
+    name = str(host.get("name", "?"))
+    kind = str(host.get("kind", "?"))
+    status = host.get("status", "unknown")
+    lines: list[str] = [f"🖥️ <b>{escape_html(name)}</b> ({escape_html(kind)})", ""]
+    lines.append(f"  status: <b>{escape_html(str(status))}</b>")
+    if "defcon" in host:
+        lines.append(f"  defcon: {host.get('defcon')}")
+    if "problems_found" in host:
+        lines.append(f"  problems: {host.get('problems_found')}")
+    if "repairs_attempted" in host:
+        lines.append(f"  repairs attempted: {host.get('repairs_attempted')}")
+    if "last_seen" in host and host["last_seen"]:
+        lines.append(f"  last seen: <code>{escape_html(str(host['last_seen']))}</code>")
+    if "last_error" in host and host["last_error"]:
+        lines.append(f"  last error: <i>{escape_html(str(host['last_error'])[:120])}</i>")
+    if "instance_id" in host:
+        lines.append(f"  instance: <code>{escape_html(str(host['instance_id']))}</code>")
+    if "region" in host:
+        lines.append(f"  region: <code>{escape_html(str(host['region']))}</code>")
+    return "\n".join(lines)

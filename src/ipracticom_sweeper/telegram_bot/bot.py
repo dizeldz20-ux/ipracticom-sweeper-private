@@ -4,11 +4,16 @@ This is the live wiring: load config, build the python-telegram-bot
 Application, register handlers (gated by `authorized_only`), install
 an error handler, and start polling.
 
+v0.4.2: split handlers into per-section submodules under
+`ipracticom_sweeper.telegram_bot.handlers`. Each handler is a plain
+async function (update, context) -> dict[str, Any]; we adapt that to
+PTB's Command/Callback API in build_application() below.
+
 Run it:
-    TELEGRAM_BOT_TOKEN=... \\
-    ALLOWED_CHAT_IDS=8351895620 \\
-    AGENT_API_URL=http://127.0.0.1:8787 \\
-    AGENT_API_TOKEN=... \\
+    TELEGRAM_BOT_TOKEN=***
+    ALLOWED_CHAT_IDS=8351895620
+    AGENT_API_URL=http://127.0.0.1:8787
+    AGENT_API_TOKEN=***
     python -m ipracticom_sweeper.telegram_bot.bot
 """
 from __future__ import annotations
@@ -24,18 +29,23 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from ipracticom_sweeper.telegram_bot.auth import UnauthorizedError, authorized_only
 from ipracticom_sweeper.telegram_bot.config import ConfigError, load_config
-from ipracticom_sweeper.telegram_bot.handlers import (
-    history as history_handler,
-    problems as problems_handler,
-    security as security_handler,
-    start as start_handler,
-    status as status_handler,
-)
 from ipracticom_sweeper.telegram_bot.services.agent_client import AgentClient
+
+# v0.4.2 handlers — one module per menu section.
+from ipracticom_sweeper.telegram_bot.handlers import (
+    approvals as approvals_handler,
+    connectors as connectors_handler,
+    dashboard as dashboard_handler,
+    fleet as fleet_handler,
+    history as history_handler,
+    settings as settings_handler,
+)
 
 log = logging.getLogger(__name__)
 
@@ -53,11 +63,11 @@ async def _send_result(target, result: dict) -> None:
 
     cq = getattr(target, "callback_query", None)
     if cq is not None:
-        # callback_query path: answer the toast + edit the message
         await cq.answer()
         try:
             await cq.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception:  # message not modified, etc.
+        except Exception:
+            # Message not modified / inline keyboard same — ignore.
             pass
         return
 
@@ -69,7 +79,7 @@ async def _send_result(target, result: dict) -> None:
 
 
 def _on_command_sync(handler):
-    """Wrap a handler as a CommandHandler callback (sync, returns the wrapped function)."""
+    """Wrap a handler as a CommandHandler callback."""
     @authorized_only
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await handler(update, context)
@@ -86,11 +96,31 @@ def _on_callback_sync(handler):
     return wrapped
 
 
-async def _on_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Silent rejection: do not respond to unauthorized chat_ids.
+async def _on_free_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Free-text message handler — only the connector form flow uses it.
 
-    Per the public `telegram-bot-builder` skill's anti-pattern guidance:
-    do not echo, do not error out, do not waste API calls.
+    We route to connectors.connector_text_input; if no form is active,
+    the handler returns None and we silently ignore the message.
+    """
+    cfg = context.bot_data.get("config")
+    if cfg is None:
+        return
+    chat = getattr(update, "effective_chat", None)
+    chat_id = getattr(chat, "id", None)
+    if chat_id is None or not cfg.is_authorized(chat_id):
+        log.warning("unauthorized chat_id=%s", chat_id)
+        return
+
+    result = await connectors_handler.connector_text_input(update, context)
+    if result is not None:
+        await _send_result(update, result)
+
+
+async def _on_unauthorized(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Silent rejection for callback queries that don't match any pattern.
+
+    Per anti-pattern guidance: do not echo, do not error out, do not
+    waste API calls.
     """
     chat = getattr(update, "effective_chat", None)
     cid = getattr(chat, "id", None)
@@ -111,30 +141,120 @@ def build_application() -> Application:
     app.bot_data["config"] = cfg
     app.bot_data["agent"] = agent
 
-    # --- command handlers ---
-    # We need the actual wrapped function, not a coroutine. The wrappers
-    # above return a function when called — so we call them eagerly.
-    start_wrapped = _on_command_sync(start_handler)
-    status_wrapped = _on_callback_sync(status_handler)
-    problems_wrapped = _on_callback_sync(problems_handler)
-    history_wrapped = _on_callback_sync(history_handler)
-    security_wrapped = _on_callback_sync(security_handler)
-    main_wrapped = _on_callback_sync(start_handler)
+    # --- Command handlers ---
+    app.add_handler(CommandHandler("start", _on_command_sync(dashboard_handler.start)))
+    app.add_handler(CommandHandler("help", _on_command_sync(dashboard_handler.start)))
 
-    app.add_handler(CommandHandler("start", start_wrapped))
-    app.add_handler(CommandHandler("help", start_wrapped))
+    # --- Free-text handler for connector form flow ---
+    # Filters.TEXT & ~Filters.COMMAND catches any text message that's not
+    # a slash command. This is the lowest-priority handler — only the
+    # connector form uses it.
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, _on_free_text)
+    )
 
-    # --- callback query handlers (inline keyboard) ---
-    # Map callback prefixes to handlers. The order matters: more specific first.
-    app.add_handler(CallbackQueryHandler(history_wrapped, pattern=r"^hist:"))
-    app.add_handler(CallbackQueryHandler(status_wrapped, pattern=r"^menu:status$"))
-    app.add_handler(CallbackQueryHandler(problems_wrapped, pattern=r"^menu:problems$"))
-    app.add_handler(CallbackQueryHandler(security_wrapped, pattern=r"^menu:security$"))
-    app.add_handler(CallbackQueryHandler(main_wrapped, pattern=r"^menu:main$"))
-    # Fallback: any other callback is unauthorized or unknown → no-op
+    # --- Callback handlers (inline keyboards) ---
+    # Order matters: specific patterns first, catch-all last.
+
+    # Dashboard section
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(dashboard_handler.back_to_main), pattern=r"^menu:main$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(dashboard_handler.dashboard), pattern=r"^menu:dashboard$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(dashboard_handler.run_now), pattern=r"^dash:run_now$"
+    ))
+
+    # History section
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(history_handler.history), pattern=r"^menu:history$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(history_handler.metric_drill),
+        pattern=r"^hist:metric:.+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(history_handler.metric_range),
+        pattern=r"^hist:range:[^:]+:\d+$",
+    ))
+
+    # Approvals section
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(approvals_handler.approvals), pattern=r"^menu:approvals$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(approvals_handler.approval_list), pattern=r"^appr:list$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(approvals_handler.approval_detail),
+        pattern=r"^appr:detail:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(approvals_handler.approve),
+        pattern=r"^appr:approve:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(approvals_handler.reject),
+        pattern=r"^appr:reject:[A-Za-z0-9_-]+$",
+    ))
+
+    # Connectors section
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connectors), pattern=r"^menu:connectors$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connector_add), pattern=r"^conn:add$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connector_view),
+        pattern=r"^conn:view:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connector_test),
+        pattern=r"^conn:test:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connector_edit),
+        pattern=r"^conn:edit:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connector_delete),
+        pattern=r"^conn:delete:[A-Za-z0-9_-]+$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(connectors_handler.connector_delete_confirm),
+        pattern=r"^conn:delete_confirm:[A-Za-z0-9_-]+$",
+    ))
+
+    # Fleet section
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(fleet_handler.fleet), pattern=r"^menu:fleet$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(fleet_handler.fleet_host),
+        pattern=r"^fleet:host:[A-Za-z0-9_-]+$",
+    ))
+
+    # Settings section
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(settings_handler.settings), pattern=r"^menu:settings$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(settings_handler.test_api), pattern=r"^set:test:api$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(settings_handler.test_tg), pattern=r"^set:test:tg$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        _on_callback_sync(settings_handler.test_slack), pattern=r"^set:test:slack$"
+    ))
+
+    # Catch-all unauthorized/unknown → silent log
     app.add_handler(CallbackQueryHandler(_on_unauthorized))
 
-    # --- error handler ---
+    # --- Error handler ---
     app.add_error_handler(_on_error)
 
     return app

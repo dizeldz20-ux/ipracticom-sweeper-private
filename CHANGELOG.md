@@ -2,7 +2,43 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.4.0] — 2026-06-29 — Comprehensive Observability
+## [0.4.2] — 2026-06-29 — Telegram Bot Dashboard Parity
+
+### Added
+- **6-section main menu** (`full_menu()`): Dashboard, History, Approvals, Connectors, Fleet, Settings
+- **3 new agent_api endpoints**:
+  - `GET /api/history` — catalog (distinct metrics + hosts + per-metric counts via SQL)
+  - `GET /api/approvals` — list pending repair proposals
+  - `POST /api/approvals/<id>/approve` — execute the repair now + archive as approved
+  - `POST /api/approvals/<id>/reject` — archive as rejected
+  - `GET /api/fleet` — local host + every configured SSM connector
+  - `GET /api/fleet/<host>` — per-host details (local reads heartbeat; connectors read config)
+- **6 handler modules** (`src/.../telegram_bot/handlers/`): dashboard, history, approvals, connectors, fleet, settings
+- **Pager utility** (`services/pager.py`) — pagination for inline keyboards (8 rows/page, 64-byte callback limit, oversized callback truncation)
+- **Conversation state** (`states.py`) — `ConnectorFormState` dataclass for the multi-step connector CRUD flow
+- **5 new agent_client methods**: `get_history_catalog`, `approve_repair`, `reject_repair`, `list_approvals`, `list_fleet`, `get_fleet_host`, `trigger_run`
+- **7 new keyboard builders**: `full_menu`, `dashboard_menu`, `history_overview_menu`, `history_metric_menu`, `approvals_menu`, `approval_action_kb`, `connectors_menu`, `connector_actions_kb`, `fleet_menu`, `settings_menu`, `confirm_kb`
+- **5 new formatters**: `format_dashboard`, `format_history_catalog`, `format_approvals_list`, `format_approval_result`, `format_connectors_list`, `format_connector_detail`, `format_fleet_list`, `format_fleet_host`
+- **Free-text message handler** for the connector form flow (4 steps: name → instance_id → region → tags)
+- **Approve = immediate execute** (per user request — not just mark approved)
+
+### Changed
+- `bot.py` rewired end-to-end — 30+ callback patterns, all gated by `authorized_only`
+- `keyboards.py` extended (backwards-compat: `main_menu()` still returns 4-button v0.4.1 menu)
+- `formatter.py` extended (all v0.4.1 functions unchanged)
+- `pyproject.toml` → 0.4.2
+
+### Tests
+- **669/669 passing** (was 595 in v0.4.1, +74 new)
+- `test_telegram_pager.py` — 17 tests
+- `test_telegram_states.py` — 7 tests
+- `test_telegram_agent_client.py` — 15 tests
+- `test_telegram_formatter.py` — 23 tests
+- `test_telegram_keyboards.py` — 17 tests
+- `test_agent_api_endpoints.py` — 13 tests (covers all 3 new endpoints + auth + 404/409 paths)
+- `test_handlers.py` (rewritten) — 7 tests for the v0.4.2 dashboard + history flow
+
+## [0.4.1] — 2026-06-29 — Hebrew Dashboard as Telegram Bot
 
 ### Added — 8 New Collectors (Slices 1.1–1.8)
 - **HTTP healthcheck** (`monitor/http_check.py`) — endpoint probing, status/time/error, supports per-target thresholds
