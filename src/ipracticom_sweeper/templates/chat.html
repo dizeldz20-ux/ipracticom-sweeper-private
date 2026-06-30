@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}צ'אט — iPracticom Sweeper{% endblock %}
+
+{% block content %}
+<section class="chat-shell" dir="rtl">
+  <header class="chat-header">
+    <h1>צ'אט עם הסוויפר</h1>
+    <p class="muted">session storage in-memory; LLM integration יגיע בסלייס 3.3</p>
+  </header>
+
+  <div class="chat-grid">
+    <aside class="chat-sessions" aria-label="sessions">
+      <h2>שיחות</h2>
+      <ul id="chat-sessions">
+        {% for s in sessions %}
+        <li data-session-id="{{ s.session_id }}">
+          <strong>{{ s.title }}</strong>
+          <span class="msg-count">{{ s.message_count }} הודעות</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <button id="new-session" type="button">+ שיחה חדשה</button>
+    </aside>
+
+    <main class="chat-main">
+      <div id="chat-log" class="chat-log" aria-live="polite">
+        <p class="muted">בחר שיחה מהרשימה או התחל חדשה.</p>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="כתוב הודעה…" autocomplete="off" required>
+        <button type="submit">שלח</button>
+      </form>
+    </main>
+  </div>
+
+  <script nonce="{{ csp_nonce() if csp_nonce else '' }}">
+    (function() {
+      const log = document.getElementById('chat-log');
+      const form = document.getElementById('chat-form');
+      const input = document.getElementById('chat-input');
+      const newBtn = document.getElementById('new-session');
+      let currentSid = null;
+      let ws = null;
+
+      function appendMsg(role, content) {
+        const p = document.createElement('p');
+        p.className = 'chat-msg role-' + role;
+        p.textContent = (role === 'user' ? 'אתה: ' : role === 'assistant' ? 'סוכן: ' : '') + content;
+        log.appendChild(p);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function connect() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(proto + '//' + location.host + '/ws');
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.user) appendMsg('user', data.user.content);
+            if (data.assistant) appendMsg('assistant', data.assistant.content);
+            if (data.error) appendMsg('system', 'שגיאה: ' + data.error);
+          } catch (e) { appendMsg('system', 'תגובה לא תקינה'); }
+        };
+        ws.onclose = () => setTimeout(connect, 1500);
+        ws.onerror = () => { try { ws.close(); } catch (e) {} };
+      }
+
+      function setSession(sid, title) {
+        currentSid = sid;
+        log.innerHTML = '';
+        if (title) appendMsg('system', 'שיחה: ' + title);
+      }
+
+      document.querySelectorAll('#chat-sessions li').forEach(li => {
+        li.addEventListener('click', () => {
+          setSession(li.dataset.sessionId, li.querySelector('strong').textContent);
+        });
+      });
+
+      newBtn.addEventListener('click', async () => {
+        const title = prompt('כותרת לשיחה חדשה?', 'חדש') || 'חדש';
+        const r = await fetch('/chat/sessions', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({title})});
+        const data = await r.json();
+        const li = document.createElement('li');
+        li.dataset.sessionId = data.session_id;
+        li.innerHTML = '<strong>' + data.title + '</strong><span class="msg-count">' + data.message_count + ' הודעות</span>';
+        li.addEventListener('click', () => setSession(data.session_id, data.title));
+        document.getElementById('chat-sessions').prepend(li);
+        setSession(data.session_id, data.title);
+      });
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const content = input.value.trim();
+        if (!content) return;
+        if (!ws || ws.readyState !== 1) {
+          appendMsg('system', 'מתחבר…');
+          return;
+        }
+        ws.send(JSON.stringify({session_id: currentSid, content}));
+        input.value = '';
+      });
+
+      connect();
+    })();
+  </script>
+</section>
+{% endblock %}

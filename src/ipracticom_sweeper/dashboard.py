@@ -61,6 +61,17 @@ LAST_RESULT_FILE = CACHE_DIR / "last-result.json"
 app = Flask(__name__)
 
 
+# --- Chat routes (v0.5.0 slice 3.1) -------------------------------------------
+
+try:
+    from ipracticom_sweeper.chat import register_chat_routes as _register_chat
+    _register_chat(app)
+except Exception as _chat_exc:  # pragma: no cover -- optional dep path
+    # Log so dashboard still boots if flask-sock missing.
+    import sys
+    print(f"[chat] chat routes disabled: {_chat_exc}", file=sys.stderr)
+
+
 # --- Jinja filters (Hebrew translation) ---------------------------------------
 
 _DEFCON_HE = {"green": "תקין", "yellow": "אזהרה", "orange": "חמור", "red": "קריטי", "black": "אסון"}
