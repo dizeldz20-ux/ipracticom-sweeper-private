@@ -15,7 +15,7 @@ import structlog
 
 from ipracticom_sweeper import audit
 from ipracticom_sweeper.config import load_rules
-from ipracticom_sweeper.monitor import aide_check, aws, cpu, disk, fd_check, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, security_baseline, services, smart_check, ssl_check, uptime, health
+from ipracticom_sweeper.monitor import aide_check, aws, cpu, disk, fd_check, freeswitch, http_check, iostat, kernel_errors, logs, memory, network, process_tracker, processes, security, security_baseline, services, smart_check, ssl_check, uptime, health
 
 logger = structlog.get_logger()
 
@@ -184,6 +184,19 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
         health_status = "ok"
     snapshot["modules"]["health"] = {"values": health_values, "status": health_status}
     audit.monitor_event("health", health_values, health_status)
+
+    # FreeSWITCH Tier 1 (FS-01..05) — v0.5.0 slice 2.1
+    try:
+        fs_values = freeswitch.collect_all()
+        fs_status = freeswitch.evaluate(fs_values, rules)
+        snapshot["modules"]["freeswitch"] = {"values": fs_values, "status": fs_status}
+        audit.monitor_event("freeswitch", fs_values, fs_status)
+    except Exception as e:
+        # FreeSWITCH collector errors must never break the pipeline.
+        snapshot["modules"]["freeswitch"] = {
+            "values": {"error": str(e)},
+            "status": "warn",
+        }
 
     # Compute overall status (worst wins)
     rank = {"ok": 0, "warn": 1, "crit": 2}
