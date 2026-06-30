@@ -2,6 +2,48 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0] — 2026-06-30 — FreeSWITCH coverage + Chat assistant
+
+### Added
+- **FreeSWITCH monitoring (FS-01..FS-25)** in `src/ipracticom_sweeper/monitor/freeswitch.py`. Four tiers, run via `monitor.checks.run_all({})`:
+  - **Tier 1 (service health)** — FS-01..05: process running, systemd unit active, SIP/SIPS ports, fs_cli reachable.
+  - **Tier 2 (network integrity)** — FS-06..09: SIP peers/registrations/gateway status, RTP port range 16384-32768.
+  - **Tier 3 (operational + baseline drift)** — FS-10..15: fs_cli latency, active calls/channels, log disk %, config mtime drift, baseline calls/hour.
+  - **Tier 4 (edge cases)** — FS-16..25: CDR backup freshness, recordings age, sofia packet loss/jitter, codec mismatch, process RSS/CPU, TCP retransmit %, fs_log error rate, fail2ban jail status.
+- **Catalogue view** (`/catalogue`) — read-only inspection of every registered check module, exported from the catalogue registry into the dashboard.
+- **Inspector view** (`/inspector/host/<name>`) — drill-down per host for the 15 base monitors.
+- **Chat shell** (`/chat`, `/chat/sessions`, `/chat/ws`) — Flask Blueprint + flask-sock WebSocket. Hebrew UI, in-memory session store, demo seeding.
+- **Hybrid retrieval** (`chat_rag.py`) — stdlib BM25Okapi + TF-IDF cosine with Hebrew-aware tokenization (NFKC + niqqud stripping). Lazy index over `docs/`.
+- **LLM router** (`chat_llm.py`) — mock-by-default with regex-driven intents; switches to OpenAI or Anthropic when the matching `*_API_KEY` env var is present. Single-iteration tool-use loop in v0.5.
+- **Tool surface** (`chat_tools.py`) — `list_fs_checks`, `get_fs_check`, `run_fs_tier(1..4)`, `run_full_pipeline` (gated by `ENABLE_HEAVY_TOOLS=1`). Hard wall-clock timeout (8s default) around every check.
+- **RTL-aware chat CSS** — `text-align: start`, `border-inline-start`, mobile breakpoint at 768px. No LTR overrides inside the chat DOM.
+
+### Changed
+- `repair_policy.yaml`: unchanged from 0.4.7 (still default `needs_approval`).
+- Dashboard nav: new `צ'אט` link next to `קטלוג` and `מפקח בדיקות`.
+
+### Operator notes
+- **Chat defaults to mock mode** — no user text leaves the box unless `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set. The mock replies surface the tool call the LLM *would* make, so the UI demonstrates the wiring without external calls.
+- **`run_full_pipeline` is opt-in**: set `ENABLE_HEAVY_TOOLS=1` before invoking. The full pipeline still takes 30-60s on a real FS host.
+- **RAG corpus**: defaults to `docs/` at the repo root. Missing directory = 0 docs, chat UI still boots cleanly with no RAG context until populated.
+
+### Tests
+- **996/996 passing** (+262 from v0.4.7):
+  - `tests/test_monitor_freeswitch_tier1.py` — 18 (FS-01..05)
+  - `tests/test_monitor_freeswitch_tier2.py` — 28 (FS-06..09)
+  - `tests/test_monitor_freeswitch_tier3.py` — 32 (FS-10..15)
+  - `tests/test_monitor_freeswitch_tier4.py` — 48 (FS-16..25)
+  - `tests/test_monitor_freeswitch_integration.py` — 7 (smoke)
+  - `tests/test_inspector.py` — 9
+  - `tests/test_catalogue.py` — 14
+  - `tests/test_chat.py` — 19 (slice 3.1)
+  - `tests/test_chat_rag.py` — 40 (slice 3.2)
+  - `tests/test_chat_llm.py` — 32 (slice 3.3)
+  - `tests/test_rtl.py` — 8 (slice 4.1)
+
+### Migration
+- Pull the new tag, run `pip install -e .` again to pick up `flask-sock` (only runtime dep change in this release). All existing monitors and the repair pipeline continue to behave as in 0.4.7.
+
 ## [0.4.7] — 2026-06-30 — Fix: bot run_now times out on long sweeps
 
 ### Fixed
