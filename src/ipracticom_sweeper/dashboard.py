@@ -1096,6 +1096,122 @@ def settings_connectors():
     )
 
 
+# --- Inspector (per-host check inspection) ---------------------------------
+
+
+@app.route("/inspector")
+def inspector_view():
+    """Per-host check inspector — pick a host, see modules + their last status.
+
+    Additive route for v0.5.0 slice 1.1. Renders the local host's last
+    snapshot modules (cpu/memory/disk/...) and lists configured connectors so
+    operators can pick a remote host to inspect via /inspector/host/<name>.
+
+    Empty state: links to /settings/connectors if no hosts are configured.
+    """
+    from ipracticom_sweeper.config import load_connectors
+
+    connectors = load_connectors()
+
+    # Local snapshot (last pipeline result) — extract module summary
+    local_snapshot = _read_last_result() or {}
+    local_modules = []
+    for module_key, module_data in (local_snapshot.get("modules") or {}).items():
+        if not isinstance(module_data, dict):
+            continue
+        local_modules.append({
+            "key": module_key,
+            "status": module_data.get("status", "unknown"),
+            "summary": _summarize_module(module_data),
+        })
+    local_modules.sort(key=lambda m: m["key"])
+
+    return render_template(
+        "inspector.html",
+        host="localhost",
+        module_kind="local",
+        connectors=connectors,
+        modules=local_modules,
+        snapshot_age=_last_result_age_sec(),
+        identity=_fetch_identity(),
+    )
+
+
+@app.route("/inspector/host/<name>")
+def inspector_host(name: str):
+    """Per-host inspector — shows the latest snapshot modules for a remote host.
+
+    Additive route for v0.5.0 slice 1.1. Reads collector snapshot via fleet
+    module, then drills into modules + their values for operator inspection.
+
+    Empty state: 404 if the connector is not configured.
+    """
+    from ipracticom_sweeper.config import get_connector
+    from ipracticom_sweeper.fleet import load_snapshot
+
+    conn = get_connector(name)
+    if conn is None:
+        return jsonify({"error": "not_found", "name": name}), 404
+
+    snap = load_snapshot(name) or {}
+    raw = snap.get("snapshot", {}) if snap else {}
+    modules_data = raw.get("modules") or {}
+
+    modules = []
+    for module_key, module_data in modules_data.items():
+        if not isinstance(module_data, dict):
+            continue
+        modules.append({
+            "key": module_key,
+            "status": module_data.get("status", "unknown"),
+            "summary": _summarize_module(module_data),
+            "values": module_data.get("values", {}),
+        })
+    modules.sort(key=lambda m: m["key"])
+
+    from ipracticom_sweeper.config import load_connectors
+    connectors = load_connectors()
+
+    return render_template(
+        "inspector.html",
+        host=name,
+        module_kind="remote",
+        connectors=connectors,
+        modules=modules,
+        snapshot_age=(time.time() - snap.get("collected_at", 0)) if snap else None,
+        identity=_fetch_identity(),
+    )
+
+
+def _summarize_module(module_data: dict) -> str:
+    """One-line Hebrew summary for a module dict.
+
+    Additive helper for v0.5.0 slice 1.1. Looks for the first scalar numeric
+    value or the first string in `values` and returns a short label. If nothing
+    useful is found, returns the module status string.
+    """
+    values = module_data.get("values") or {}
+    # Prefer a primary scalar if present
+    for key in ("cpu.idle_percent", "memory.used_percent", "disk.used_percent"):
+        v = values.get(key)
+        if isinstance(v, (int, float)):
+            if "cpu.idle" in key:
+                return f"idle {v:.0f}%"
+            if "memory.used" in key:
+                return f"used {v:.0f}%"
+            if "disk.used" in key:
+                return f"used {v:.0f}%"
+    # Fallback: first numeric or short string
+    for k, v in values.items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return f"{k}={v}"
+        if isinstance(v, str) and 0 < len(v) <= 40:
+            return f"{k}={v[:40]}"
+        if isinstance(v, list) and v:
+            return f"{k} ({len(v)})"
+    return module_data.get("status", "unknown")
+
+
 # --- CLI entry point ---------------------------------------------------------
 
 
