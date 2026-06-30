@@ -198,6 +198,21 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
             "status": "warn",
         }
 
+    # FreeSWITCH Tier 2 (FS-06..09) — v0.5.0 slice 2.2 (additive module)
+    try:
+        fs_net_values = freeswitch.collect_network()
+        fs_net_status = freeswitch.evaluate_network(fs_net_values, rules)
+        snapshot["modules"]["freeswitch_network"] = {
+            "values": fs_net_values,
+            "status": fs_net_status,
+        }
+        audit.monitor_event("freeswitch_network", fs_net_values, fs_net_status)
+    except Exception as e:
+        snapshot["modules"]["freeswitch_network"] = {
+            "values": {"error": str(e)},
+            "status": "warn",
+        }
+
     # Compute overall status (worst wins)
     rank = {"ok": 0, "warn": 1, "crit": 2}
     worst = "ok"
