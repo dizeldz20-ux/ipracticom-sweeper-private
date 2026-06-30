@@ -2,6 +2,23 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.7] — 2026-06-30 — Fix: bot run_now times out on long sweeps
+
+### Fixed
+- **`run_now` button failed with "agent_api request failed"** even though `/api/run` returned 200. Root cause: the bot's httpx client had a 10s default timeout, but the actual pipeline sweep takes 30-45 seconds (it runs 15 monitors: cpu, memory, disk, services, security, network, logs, processes, aws, kernel, process_tracker, fd_check, security_baseline, uptime, health, plus diagnose + adapt phases). On slow hosts the 10s timeout fired before the pipeline returned, surfacing as the misleading "agent_api request failed" error to the operator.
+- **`trigger_run()` now passes `timeout=120.0`** to `_post()` — overrides the client default just for the sweep endpoint.
+- **`_post()` now accepts an optional `timeout` kwarg** — passes it through to httpx. Default is `None` (httpx uses the client's 10s default).
+
+### Verified end-to-end
+- Restarted bot, ran `trigger_run()` via direct httpx call with 120s timeout — got back `defcon=4` + full diagnosis (15 modules, 2 needing human: disk warn + logs warn).
+- Verified the failure mode by checking the agent_api log: `POST /api/run HTTP/1.1 200` actually succeeded at the server side; the bot's client just gave up before getting the response.
+
+### Tests
+- **734/734 passing** (+3 new):
+  - `test_trigger_run_passes_long_timeout` — verifies timeout=120 is forwarded.
+  - `test_post_helper_accepts_timeout_override` — verifies the kwarg plumbing.
+  - `test_post_helper_default_timeout_is_none` — verifies default behavior unchanged for other endpoints.
+
 ## [0.4.6] — 2026-06-30 — Approval gate is the new default + rich alerts
 
 ### Changed (per Daniel 2026-06-30)

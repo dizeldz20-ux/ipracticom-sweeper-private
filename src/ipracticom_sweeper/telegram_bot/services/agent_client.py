@@ -68,12 +68,22 @@ class AgentClient:
         except Exception as e:
             raise AgentAPIError(resp.status_code, f"agent_api returned invalid JSON: {e}") from e
 
-    async def _post(self, path: str, json_body: dict | None = None) -> Any:
+    async def _post(
+        self,
+        path: str,
+        json_body: dict | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """POST helper. Long-running endpoints (e.g. /api/run that triggers
+        a full 15-monitor sweep) can pass timeout=120 to override the default
+        10s httpx client timeout.
+        """
         try:
             resp = await self._http.post(
                 self._url(path),
                 json=json_body or {},
                 headers=self._headers(),
+                timeout=timeout,
             )
         except httpx.HTTPError as e:
             raise AgentAPIError(None, f"agent_api request failed: {e}") from e
@@ -147,8 +157,16 @@ class AgentClient:
         return await self._get(f"/api/fleet/{host}")
 
     async def trigger_run(self) -> dict:
-        """POST /api/run — trigger a fresh sweep, return the new snapshot."""
-        return await self._post("/api/run")
+        """POST /api/run — trigger a fresh sweep, return the new snapshot.
+
+        v0.4.7: Uses a 120s timeout because the pipeline runs 15 monitors
+        (cpu, memory, disk, services, security, network, logs, processes,
+        aws, kernel, process_tracker, fd_check, security_baseline, uptime,
+        health) plus diagnose and adapt phases. Typical sweep takes 30-45s;
+        on slow hosts or with many connectors it can exceed the default 10s
+        httpx timeout and surface as "agent_api request failed" in the bot.
+        """
+        return await self._post("/api/run", timeout=120.0)
 
     async def get_logs(self, tail: int = 50) -> dict:
         """GET /api/logs?tail=N — list every available log with its tail.
