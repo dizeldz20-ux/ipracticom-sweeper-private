@@ -3,7 +3,7 @@
 {% block title %}צ'אט — iPracticom Sweeper{% endblock %}
 
 {% block content %}
-<section class="chat-shell" dir="rtl">
+<section class="chat-shell">
   <header class="chat-header">
     <h1>צ'אט עם הסוויפר</h1>
     <p class="muted">session storage in-memory; LLM integration יגיע בסלייס 3.3</p>
@@ -43,10 +43,18 @@
       let currentSid = null;
       let ws = null;
 
-      function appendMsg(role, content) {
+      function appendMsg(role, content, extraBlocks) {
         const p = document.createElement('p');
         p.className = 'chat-msg role-' + role;
-        p.textContent = (role === 'user' ? 'אתה: ' : role === 'assistant' ? 'סוכן: ' : '') + content;
+        p.textContent = (role === 'user' ? '\u05d0\u05ea\u05d4: ' : role === 'assistant' ? '\u05e1\u05d5\u05db\u05df: ' : '') + content;
+        if (extraBlocks && extraBlocks.length) {
+          for (const blk of extraBlocks) {
+            const div = document.createElement('div');
+            div.className = blk.cls || 'tool-block';
+            div.textContent = blk.text;
+            p.appendChild(div);
+          }
+        }
         log.appendChild(p);
         log.scrollTop = log.scrollHeight;
       }
@@ -57,10 +65,28 @@
         ws.onmessage = (ev) => {
           try {
             const data = JSON.parse(ev.data);
+            const blocks = [];
+            if (Array.isArray(data.tool_calls) && data.tool_calls.length) {
+              const lines = ['[tools] ' + (data.llm_mode || 'mock')];
+              for (const tc of data.tool_calls) {
+                const args = tc.arguments || {};
+                const argsStr = Object.keys(args).map(k => k + '=' + JSON.stringify(args[k])).join(', ');
+                lines.push('\u2022 ' + (tc.name || '?') + '(' + argsStr + ')');
+              }
+              blocks.push({ cls: 'tool-block', text: lines.join('\n') });
+            }
+            if (Array.isArray(data.rag_hits) && data.rag_hits.length) {
+              const rlines = ['[RAG] top hits'];
+              for (const h of data.rag_hits) {
+                const snippet = (h.text || '').trim().replace(/\s+/g, ' ').slice(0, 160);
+                rlines.push('\u2022 ' + h.doc_id + ' (score ' + (h.score || 0).toFixed(2) + '): ' + snippet);
+              }
+              blocks.push({ cls: 'rag-block', text: rlines.join('\n') });
+            }
             if (data.user) appendMsg('user', data.user.content);
-            if (data.assistant) appendMsg('assistant', data.assistant.content);
-            if (data.error) appendMsg('system', 'שגיאה: ' + data.error);
-          } catch (e) { appendMsg('system', 'תגובה לא תקינה'); }
+            if (data.assistant) appendMsg('assistant', data.assistant.content, blocks);
+            if (data.error) appendMsg('system', '\u05e9\u05d2\u05d9\u05d0\u05d4: ' + data.error);
+          } catch (e) { appendMsg('system', '\u05ea\u05d2\u05d5\u05d1\u05d4 \u05dc\u05d0 \u05ea\u05e7\u05d9\u05e0\u05d4'); }
         };
         ws.onclose = () => setTimeout(connect, 1500);
         ws.onerror = () => { try { ws.close(); } catch (e) {} };
