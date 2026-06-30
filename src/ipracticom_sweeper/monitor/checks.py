@@ -213,6 +213,21 @@ def run_all(rules: dict | None = None) -> dict[str, Any]:
             "status": "warn",
         }
 
+    # FreeSWITCH Tier 3 (FS-10..15) — v0.5.0 slice 2.3 (operational + drift)
+    try:
+        fs_op_values = freeswitch.collect_operational()
+        fs_op_status = freeswitch.evaluate_operational(fs_op_values, rules)
+        snapshot["modules"]["freeswitch_operational"] = {
+            "values": fs_op_values,
+            "status": fs_op_status,
+        }
+        audit.monitor_event("freeswitch_operational", fs_op_values, fs_op_status)
+    except Exception as e:
+        snapshot["modules"]["freeswitch_operational"] = {
+            "values": {"error": str(e)},
+            "status": "warn",
+        }
+
     # Compute overall status (worst wins)
     rank = {"ok": 0, "warn": 1, "crit": 2}
     worst = "ok"

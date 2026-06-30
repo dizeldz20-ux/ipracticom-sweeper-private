@@ -19,6 +19,7 @@ the repair subsystem (separate from monitor).
 """
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
@@ -31,6 +32,20 @@ DEFAULT_CLI_TIMEOUT = 5  # FS-05, seconds
 DEFAULT_RTP_PORT_LOW = 16384  # FS-09 RTP range low
 DEFAULT_RTP_PORT_HIGH = 32768  # FS-09 RTP range high
 DEFAULT_REGISTRATIONS_MIN = 1  # FS-07: anything below 1 registered = crit
+
+# Tier-3 (slice 2.3) thresholds
+DEFAULT_FS_CLI_LATENCY_WARN_MS = 500   # FS-10
+DEFAULT_FS_CLI_LATENCY_CRIT_MS = 2000  # FS-10
+DEFAULT_ACTIVE_CALLS_WARN = 100        # FS-11
+DEFAULT_ACTIVE_CALLS_CRIT = 500        # FS-11
+DEFAULT_ACTIVE_CHANNELS_WARN = 200     # FS-12
+DEFAULT_ACTIVE_CHANNELS_CRIT = 1000    # FS-12
+DEFAULT_LOG_DISK_PCT_WARN = 80         # FS-13
+DEFAULT_LOG_DISK_PCT_CRIT = 95         # FS-13
+DEFAULT_CONFIG_DRIFT_DAYS_WARN = 60    # FS-14
+DEFAULT_CONFIG_DRIFT_DAYS_CRIT = 180   # FS-14
+DEFAULT_BASELINE_DRIFT_FACTOR_WARN = 2.0  # FS-15: 2× baseline = warn
+DEFAULT_BASELINE_DRIFT_FACTOR_CRIT = 4.0  # FS-15: 4× baseline = crit
 
 
 # --- Low-level helpers ------------------------------------------------------
@@ -428,6 +443,302 @@ def evaluate(values: dict[str, Any], rules: dict | None = None) -> str:
     return "ok"
 
 
+# --- FS-10..15 operational + baseline drift (Sprint 2 slice 2.3) --------
+
+
+def check_fs10_cli_latency(
+    warn_ms: int = DEFAULT_FS_CLI_LATENCY_WARN_MS,
+    crit_ms: int = DEFAULT_FS_CLI_LATENCY_CRIT_MS,
+) -> dict[str, Any]:
+    """FS-10: time a `fs_cli -x status` round-trip.
+
+    Slow CLI is usually a sign of disk pressure or an under-resourced VM.
+    Misses to call fs_cli (PATH) → status=warn with explicit reason.
+    """
+    import time as _time
+
+    if shutil.which("fs_cli") is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs10_cli_rc": 127,
+                "fs10_elapsed_ms": None,
+                "fs10_warn_ms": warn_ms,
+                "fs10_crit_ms": crit_ms,
+                "fs10_reason": "fs_cli not on PATH",
+            },
+        }
+    started = _time.monotonic()
+    rc, _, _ = _run(["fs_cli", "-x", "status"], timeout=10)
+    elapsed_ms = int((_time.monotonic() - started) * 1000)
+    if rc != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs10_cli_rc": rc,
+                "fs10_elapsed_ms": elapsed_ms,
+                "fs10_warn_ms": warn_ms,
+                "fs10_crit_ms": crit_ms,
+                "fs10_reason": "cli error",
+            },
+        }
+    if elapsed_ms >= crit_ms:
+        status = "crit"
+    elif elapsed_ms >= warn_ms:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs10_cli_rc": rc,
+            "fs10_elapsed_ms": elapsed_ms,
+            "fs10_warn_ms": warn_ms,
+            "fs10_crit_ms": crit_ms,
+        },
+    }
+
+
+def check_fs11_active_calls(
+    warn: int = DEFAULT_ACTIVE_CALLS_WARN,
+    crit: int = DEFAULT_ACTIVE_CALLS_CRIT,
+) -> dict[str, Any]:
+    """FS-11: count of in-progress calls from `show calls count`.
+
+    Thresholds are advisory — a busy contact-center may legitimately exceed
+    `warn`. The number is what matters for dashboards + diffs over time.
+    """
+    res = _run_fscli("show calls count")
+    if res["rc"] != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs11_cli_rc": res["rc"],
+                "fs11_active_calls": None,
+                "fs11_warn": warn,
+                "fs11_crit": crit,
+                "fs11_reason": "cli failed",
+            },
+        }
+    n = _parse_int_from_fscli(res["stdout"])
+    if n is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs11_cli_rc": res["rc"],
+                "fs11_active_calls": None,
+                "fs11_warn": warn,
+                "fs11_crit": crit,
+                "fs11_reason": "could not parse count",
+            },
+        }
+    if n >= crit:
+        status = "crit"
+    elif n >= warn:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs11_cli_rc": res["rc"],
+            "fs11_active_calls": n,
+            "fs11_warn": warn,
+            "fs11_crit": crit,
+        },
+    }
+
+
+def check_fs12_active_channels(
+    warn: int = DEFAULT_ACTIVE_CHANNELS_WARN,
+    crit: int = DEFAULT_ACTIVE_CHANNELS_CRIT,
+) -> dict[str, Any]:
+    """FS-12: count of open channels (== calls × legs usually).
+
+    High channel count vs. low calls count = media not being torn down,
+    possible leak.
+    """
+    res = _run_fscli("show channels count")
+    if res["rc"] != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs12_cli_rc": res["rc"],
+                "fs12_active_channels": None,
+                "fs12_warn": warn,
+                "fs12_crit": crit,
+                "fs12_reason": "cli failed",
+            },
+        }
+    n = _parse_int_from_fscli(res["stdout"])
+    if n is None:
+        return {
+            "status": "warn",
+            "values": {
+                "fs12_cli_rc": res["rc"],
+                "fs12_active_channels": None,
+                "fs12_warn": warn,
+                "fs12_crit": crit,
+                "fs12_reason": "could not parse count",
+            },
+        }
+    if n >= crit:
+        status = "crit"
+    elif n >= warn:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs12_cli_rc": res["rc"],
+            "fs12_active_channels": n,
+            "fs12_warn": warn,
+            "fs12_crit": crit,
+        },
+    }
+
+
+def check_fs13_log_disk_usage(
+    log_path: str = "/var/log/freeswitch",
+    warn_pct: int = DEFAULT_LOG_DISK_PCT_WARN,
+    crit_pct: int = DEFAULT_LOG_DISK_PCT_CRIT,
+) -> dict[str, Any]:
+    """FS-13: disk usage of the FS log directory as a % of its parent FS.
+
+    We don't have `du` semantics in pure Python without scanning — we use
+    `shutil.disk_usage` on the directory's mount point as an approximation.
+    For an exact measurement, install logs.shutil.disk_usage would need an
+    extra recursion step which we defer. The approximation is fine for
+    *trend* alerts because errors of a few GB don't change the alert tone.
+    """
+    try:
+        usage = shutil.disk_usage(log_path)
+        used_pct = round(usage.used * 100.0 / usage.total, 1)
+    except (FileNotFoundError, OSError) as e:
+        return {
+            "status": "warn",
+            "values": {
+                "fs13_path": log_path,
+                "fs13_used_pct": None,
+                "fs13_warn_pct": warn_pct,
+                "fs13_crit_pct": crit_pct,
+                "fs13_reason": str(e),
+            },
+        }
+    if used_pct >= crit_pct:
+        status = "crit"
+    elif used_pct >= warn_pct:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs13_path": log_path,
+            "fs13_used_pct": used_pct,
+            "fs13_warn_pct": warn_pct,
+            "fs13_crit_pct": crit_pct,
+        },
+    }
+
+
+def check_fs14_config_drift_days(
+    config_path: str = "/etc/freeswitch/freeswitch.xml",
+    warn_days: int = DEFAULT_CONFIG_DRIFT_DAYS_WARN,
+    crit_days: int = DEFAULT_CONFIG_DRIFT_DAYS_CRIT,
+) -> dict[str, Any]:
+    """FS-14: age of the FS configuration in days.
+
+    If nobody has touched the config in months, the instance likely fell
+    off the upgrade cadence. Operators can use this to schedule reviews.
+    """
+    try:
+        mtime = os.path.getmtime(config_path)
+    except (FileNotFoundError, OSError) as e:
+        return {
+            "status": "warn",
+            "values": {
+                "fs14_path": config_path,
+                "fs14_age_days": None,
+                "fs14_warn_days": warn_days,
+                "fs14_crit_days": crit_days,
+                "fs14_reason": str(e),
+            },
+        }
+    import time as _time
+    age_days = int((_time.time() - mtime) / 86400)
+    if age_days >= crit_days:
+        status = "crit"
+    elif age_days >= warn_days:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs14_path": config_path,
+            "fs14_age_days": age_days,
+            "fs14_warn_days": warn_days,
+            "fs14_crit_days": crit_days,
+        },
+    }
+
+
+def check_fs15_baseline_calls_per_hour(
+    baseline_calls_per_hour: float | None = None,
+    warn_factor: float = DEFAULT_BASELINE_DRIFT_FACTOR_WARN,
+    crit_factor: float = DEFAULT_BASELINE_DRIFT_FACTOR_CRIT,
+) -> dict[str, Any]:
+    """FS-15: calls-per-hour vs. a learned baseline.
+
+    When the operator hasn't set a baseline yet (`baseline_calls_per_hour`
+    is None), we report ok with `fs15_baseline_set=False` so the UI can
+    hide this check rather than emit a spurious warning.
+    """
+    res = _run_fscli("show calls count")
+    if res["rc"] != 0:
+        return {
+            "status": "warn",
+            "values": {
+                "fs15_cli_rc": res["rc"],
+                "fs15_current_calls": None,
+                "fs15_baseline": baseline_calls_per_hour,
+                "fs15_reason": "cli failed",
+            },
+        }
+    current = _parse_int_from_fscli(res["stdout"])
+    if baseline_calls_per_hour is None or baseline_calls_per_hour <= 0:
+        return {
+            "status": "ok",
+            "values": {
+                "fs15_cli_rc": res["rc"],
+                "fs15_current_calls": current,
+                "fs15_baseline": None,
+                "fs15_baseline_set": False,
+            },
+        }
+    ratio = (current or 0) / baseline_calls_per_hour
+    if ratio >= crit_factor:
+        status = "crit"
+    elif ratio >= warn_factor:
+        status = "warn"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "values": {
+            "fs15_cli_rc": res["rc"],
+            "fs15_current_calls": current,
+            "fs15_baseline": baseline_calls_per_hour,
+            "fs15_baseline_set": True,
+            "fs15_drift_factor": round(ratio, 2),
+            "fs15_warn_factor": warn_factor,
+            "fs15_crit_factor": crit_factor,
+        },
+    }
+
+
 # --- FS-06..09 aggregator (Tier 2 / network integrity) --------------------
 
 
@@ -477,6 +788,70 @@ def evaluate_network(values: dict[str, Any], rules: dict | None = None) -> str:
         values.get("fs06_status", "warn"),
         values.get("fs08_status", "warn"),
         values.get("fs09_status", "warn"),
+    ]
+    order = {"ok": 0, "warn": 1, "crit": 2}
+    worst = max(statuses, key=lambda s: order.get(s, 1))
+    return worst
+
+
+# --- FS-10..15 aggregator (Tier 3 / operational + baseline drift) -------
+
+
+def collect_operational(
+    fs_baseline_calls_per_hour: float | None = None,
+) -> dict[str, Any]:
+    """Run FS-10..15 and return a parallel dict for the snapshot module."""
+    fs10 = check_fs10_cli_latency()
+    fs11 = check_fs11_active_calls()
+    fs12 = check_fs12_active_channels()
+    fs13 = check_fs13_log_disk_usage()
+    fs14 = check_fs14_config_drift_days()
+    fs15 = check_fs15_baseline_calls_per_hour(
+        baseline_calls_per_hour=fs_baseline_calls_per_hour
+    )
+
+    return {
+        "fs10_elapsed_ms": fs10["values"]["fs10_elapsed_ms"],
+        "fs10_warn_ms": fs10["values"]["fs10_warn_ms"],
+        "fs10_crit_ms": fs10["values"]["fs10_crit_ms"],
+        "fs11_active_calls": fs11["values"]["fs11_active_calls"],
+        "fs11_warn": fs11["values"]["fs11_warn"],
+        "fs11_crit": fs11["values"]["fs11_crit"],
+        "fs12_active_channels": fs12["values"]["fs12_active_channels"],
+        "fs12_warn": fs12["values"]["fs12_warn"],
+        "fs12_crit": fs12["values"]["fs12_crit"],
+        "fs13_used_pct": fs13["values"]["fs13_used_pct"],
+        "fs13_path": fs13["values"]["fs13_path"],
+        "fs14_age_days": fs14["values"]["fs14_age_days"],
+        "fs14_warn_days": fs14["values"]["fs14_warn_days"],
+        "fs14_crit_days": fs14["values"]["fs14_crit_days"],
+        "fs15_current_calls": fs15["values"]["fs15_current_calls"],
+        "fs15_baseline": fs15["values"]["fs15_baseline"],
+        "fs15_baseline_set": fs15["values"].get("fs15_baseline_set", False),
+        "fs15_drift_factor": fs15["values"].get("fs15_drift_factor"),
+        "fs10_status": fs10["status"],
+        "fs11_status": fs11["status"],
+        "fs12_status": fs12["status"],
+        "fs13_status": fs13["status"],
+        "fs14_status": fs14["status"],
+        "fs15_status": fs15["status"],
+    }
+
+
+def evaluate_operational(values: dict[str, Any], rules: dict | None = None) -> str:
+    """Tier-3 evaluate: FS-10..15.
+
+    Tier-3 checks are advisory — even a crit here means "investigate" rather
+    than "phone system down". The evaluator returns the worst of the
+    per-check statuses so the snapshot module still reflects severity.
+    """
+    statuses = [
+        values.get("fs10_status", "warn"),
+        values.get("fs11_status", "warn"),
+        values.get("fs12_status", "warn"),
+        values.get("fs13_status", "warn"),
+        values.get("fs14_status", "warn"),
+        values.get("fs15_status", "warn"),
     ]
     order = {"ok": 0, "warn": 1, "crit": 2}
     worst = max(statuses, key=lambda s: order.get(s, 1))
