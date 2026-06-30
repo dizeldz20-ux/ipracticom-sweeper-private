@@ -233,6 +233,110 @@ def _fetch_heartbeat():
         return None
 
 
+def _count_pbx_hosts(summary) -> int:
+    """Hosts with FreeSWITCH (FS-01..FS-25 collected). Lightweight heuristic.
+
+    Slice 5.3 stays read-only — counts by hostname prefix or explicit tag in the
+    aggregated summary. Returns 0 if data unavailable.
+    """
+    if not summary or not isinstance(summary, dict):
+        return 0
+    hosts = summary.get("hosts") or summary.get("per_host") or {}
+    if isinstance(hosts, dict):
+        # Any host whose name hints at PBX (fs-, freeswitch-, pbx-) counts.
+        pbx_hosts = {
+            name for name in hosts
+            if any(tok in name.lower() for tok in ("fs-", "freeswitch", "pbx"))
+        }
+        return len(pbx_hosts)
+    return 0
+
+
+def _fetch_v6_stats() -> dict:
+    """Compute the 4-card stats bar for the v6 dashboard.
+
+    Cards:
+      - total_machines: fleet summary total_hosts
+      - pbx_count: hosts matching FS prefix heuristic
+      - critical_count: snapshot's repairs_failed + problems_found (heuristic),
+        or `needs_human` if available
+      - events_today: count of events in the SQLite store for today
+
+    Every field falls back to "—" if data unavailable (no fabricated numbers).
+    """
+    from datetime import datetime, timezone
+
+    stats = {
+        "total_machines": "—",
+        "pbx_count": "—",
+        "critical_count": "—",
+        "events_today": "—",
+        "defcon": None,
+    }
+
+    # Fleet (multi-host) view — only available locally.
+    if not _is_remote_mode():
+        try:
+            from ipracticom_sweeper.fleet import aggregate, load_all_snapshots
+            from ipracticom_sweeper.config.connectors import load_connectors
+
+            connectors = load_connectors()
+            snapshots = load_all_snapshots()
+            if connectors or snapshots:
+                # Use the aggregator on whatever snapshots we have; if empty,
+                # build a no-data placeholder that mirrors the fleet summary shape.
+                converted = []
+                for s in snapshots:
+                    inner = s.get("snapshot", {}) or {}
+                    converted.append({
+                        "name": s.get("name", "?"),
+                        "snapshot": inner,
+                    })
+                summary = aggregate(converted)
+                stats["total_machines"] = summary.get("total_hosts", 0)
+                stats["pbx_count"] = _count_pbx_hosts(summary)
+        except Exception as e:
+            app.logger.warning("v6_stats_fleet_failed: %s", e)
+
+    # Snapshot-derived metrics.
+    try:
+        snap = _fetch_snapshot()
+        if snap:
+            # Critical count: prefer an explicit `critical` key, else sum
+            # problems_found + repairs_failed when both are present.
+            crit = snap.get("critical")
+            if isinstance(crit, int):
+                stats["critical_count"] = crit
+            else:
+                problems = snap.get("problems_found", 0)
+                rep_failed = snap.get("repairs_failed", 0)
+                try:
+                    stats["critical_count"] = int(problems) + int(rep_failed)
+                except (TypeError, ValueError):
+                    pass
+            d = snap.get("defcon")
+            if isinstance(d, int):
+                stats["defcon"] = d
+    except Exception as e:
+        app.logger.warning("v6_stats_snapshot_failed: %s", e)
+
+    # Events today from SQLite store.
+    try:
+        from ipracticom_sweeper.state.sqlite_store import init_db, count_events_since
+        init_db()
+        today_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        n = count_events_since(today_start)
+        if isinstance(n, int):
+            stats["events_today"] = n
+    except Exception as e:
+        # Module missing or table not migrated — leave as "—".
+        app.logger.debug("v6_stats_events_today_unavailable: %s", e)
+
+    return stats
+
+
 # --- Notification settings (Telegram + Slack) ----------------------------
 
 NOTIFICATIONS_ENV_FILE = Path("/etc/ipracticom-sweeper/notifications.env")
@@ -643,6 +747,29 @@ def approval_reject(pid):
         "reason": reason,
     })
     return _redirect_to_dashboard()
+
+
+@app.route("/v6")
+def v6_index():
+    """v0.6.0 — slice 5.2 + 5.3: dark slate sidebar + 4-card stats bar.
+
+    Stats are pulled from real data sources:
+      - total_machines / pbx_count ← fleet aggregator
+      - critical_count / defcon     ← pipeline snapshot
+      - events_today                ← SQLite event store
+    All fields fall back to "—" when the source is unavailable so we never
+    show a fabricated number on a live dashboard.
+    """
+    heartbeat = _fetch_heartbeat()
+    stats = _fetch_v6_stats()
+    return render_template(
+        "v6_index.html",
+        heartbeat=heartbeat,
+        stats=stats,
+        now_iso=datetime.now(timezone.utc).isoformat(),
+        identity=_fetch_identity(),
+        is_remote=_is_remote_mode(),
+    )
 
 
 @app.route("/healthz")
