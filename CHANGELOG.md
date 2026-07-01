@@ -2,6 +2,21 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.1] — 2026-07-01 — one-liner installer + agent_api + SPA A/B
+
+### Added
+- **`install.sh` one-liner** (root script): `curl -sSL .../install.sh | sudo bash` — detects OS family (apt/dnf/yum), installs OS deps, clones to `/opt/ipracticom-sweeper`, seeds `/etc/ipracticom-sweeper/agent.env` + `repair_policy.yaml`, enables systemd units, verifies `/healthz`. Supports `SWEEPER_BRANCH=` override and `--uninstall`.
+- **Standalone `ipracticom-sweeper-api.service`** — runs the Flask dashboard (with v6 + SPA routes) on `127.0.0.1:8787` as a long-lived service, separated from the periodic sweeper. Bearer-token auth via `AGENT_API_TOKEN` (open mode if unset).
+- **`scripts/update.sh`** with `--check` / `--version` / `--rollback`. Backs up `/etc/ipracticom-sweeper/` and operator state to `/var/lib/ipracticom-sweeper/.update_backup` before every pull.
+- **SPA dashboard variants A/B** (commit `d79a535`): `/spa` chooser + `/spa/a` (Google AI Studio port, Tailwind+Inter+indigo) + `/spa/b` (impeccable polish, OKLCH+Heebo+motion). Both render the live `/api/snapshot`. New module `ipracticom_sweeper.spa_context` with pure `shape_spa_context` view-model. 11 new tests in `tests/test_spa_variants.py`.
+
+### Fixed
+- `test_rtl.py::test_chat_log_classes_use_logical_properties` false-positive: added a `/* --- end Chat shell */` delimiter so the test regex stops at the actual chat block instead of bleeding into v6 CSS. Zero visual change.
+
+### Notes
+- Total test count: **1083 passed** (from 1034 in v0.6.0). Full suite exits 0 in ~7 min.
+- Skills applied in this cycle: `impeccable`, `emil-design-eng`, `israeli-ui-design-system`, `design-tasks-protocol`, `build-product`.
+
 ## [0.6.0] — 2026-07-01 — v6 dashboard rewrite (Sprints 5–7)
 
 ### Added — v6 dashboard surface (14 new routes, +3004 LOC, +38 tests)

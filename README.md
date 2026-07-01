@@ -3,8 +3,8 @@
 > Server health monitor and safe auto-repair agent for AWS Linux fleets.
 > Built for [iPracticom](https://github.com/dizeldz20-ux) production operations.
 
-[![version](https://img.shields.io/badge/version-0.6.0-blue)]()
-[![tests](https://img.shields.io/badge/tests-996%2B%20passing-brightgreen)]()
+[![version](https://img.shields.io/badge/version-0.6.1-blue)]()
+[![tests](https://img.shields.io/badge/tests-1083%20passing-brightgreen)]()
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![license](https://img.shields.io/badge/license-internal-lightgrey)]()
 
@@ -165,7 +165,7 @@ Snapshots are stored in `/var/lib/ipracticom-sweeper/snapshots/<uuid>.json`. Rol
 python3 -m pytest tests/ -v
 ```
 
-Test count: **1034+ tests** across 23 monitor modules + 25 FreeSWITCH checks + 14 v6 dashboard routes. Run with `make test-fast` (targeted) or `pytest -q tests/test_v6_*` for the new dashboard surface.
+Test count: **1083+ tests** across 23 monitor modules + 25 FreeSWITCH checks + 14 v6 dashboard routes + 11 SPA variant tests. Run with `make test-fast` (targeted) or `pytest -q tests/test_v6_*` for the v6 surface, `pytest -q tests/test_spa_variants.py` for the SPA comparison.
 
 ## Architecture diagrams
 
@@ -199,11 +199,25 @@ src/ipracticom_sweeper/
 ├── dashboard.py        # Flask UI (local + remote)
 ├── agent_api.py        # Standalone HTTP API
 └── agent_client.py     # Typed HTTP client
-tests/                  # 1034+ tests across all surfaces
+tests/                  # 1083+ tests across all surfaces
 systemd/                # service + timer + agent_api units
 scripts/                # install-systemd.sh, update.sh, install_telegram_bot.sh
 install.sh              # one-liner installer (curl | bash)
 ```
+
+## SPA dashboard variants (added in v0.6.1, commit `d79a535`)
+
+Side-by-side comparison of two dashboard redesigns, served from the same Flask process and pulling from the live `/api/snapshot` (no mock fixtures). Designed so a peer can A/B pick the more comfortable one.
+
+| Route | Purpose | Read/Write |
+|---|---|---|
+| `/spa` | Chooser landing (side-by-side cards) | read |
+| `/spa/a` | **Variant A** — faithful Google AI Studio port (Tailwind, Inter, indigo, rounded-3xl) | read |
+| `/spa/b` | **Variant B** — impeccable polish (OKLCH tokens, Heebo+Inter, motion with `prefers-reduced-motion`, semantic RTL, gapless bento) | read |
+
+Both variants render the same real snapshot: 15 modules, `security_baseline=crit`, `disk=warn`, DEFCON 4, etc. The shared view-model lives in `ipracticom_sweeper.spa_context.shape_spa_context` (pure, fully unit-tested). Skills applied: `impeccable` (OKLCH, no `#000`/`#fff`, single emerald accent, no em-dashes), `emil-design-eng` (cubic-bezier easing, scale(0.97) on press, page-entry translateY+fade, reduced-motion), `israeli-ui-design-system` (Heebo+Inter, CSS logical properties, RTL, tabular-nums), `design-tasks-protocol` (survey-before-code), `build-product` (ship discipline, verify-in-tunnel).
+
+Tests: `tests/test_spa_variants.py` — 11 tests (pure view-model + 3 routes with real-data assertions + empty-snapshot safety + reduced-motion marker).
 
 ## v6 Dashboard (added in v0.6.0)
 
