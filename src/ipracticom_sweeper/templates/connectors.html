@@ -250,6 +250,28 @@
 .status-ok    { background: rgba(63, 185, 80, 0.15);  color: var(--ok); }
 .status-warn  { background: rgba(210, 153, 34, 0.15); color: var(--warning); }
 .status-off   { background: rgba(139, 148, 158, 0.15); color: var(--slate); }
+
+/* Save button — slice 7: make the primary CTA obvious (was previously
+   indistinguishable from the page background in dark SPA shell). */
+.btn-primary {
+  background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+  color: white;
+  border: 1px solid #4f46e5;
+  border-radius: 8px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.4);
+  transition: transform 80ms ease, box-shadow 120ms ease;
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%);
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.5);
+}
+.btn-primary:active { transform: translateY(1px); }
+.settings-actions { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); }
 </style>
 
 {% endblock %}

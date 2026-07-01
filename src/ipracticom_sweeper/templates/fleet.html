@@ -103,55 +103,83 @@
 </div>
 
 <style>
+/* Slice 7: fleet cards — absolute values to match dark SPA shell.
+   The previous version used --bg-elevated/--border/--accent which weren't
+   defined here, so cards looked washed out against the dark slate background. */
 .host-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-  margin-top: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+  margin-top: 24px;
 }
 .host-card {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  transition: transform 0.1s, border-color 0.2s;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 18px;
+  transition: transform 120ms ease, border-color 180ms ease, box-shadow 180ms ease;
   cursor: default;
+  position: relative;
+  overflow: hidden;
 }
 .host-card:hover {
-  border-color: var(--accent);
+  border-color: #6366f1;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .host-card.defcon-1, .host-card.defcon-2 {
-  border-right: 4px solid var(--danger);
+  border-color: #f87171;
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2), 0 4px 12px rgba(248, 113, 113, 0.1);
 }
 .host-card.defcon-3, .host-card.defcon-4 {
-  border-right: 4px solid var(--warning);
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2), 0 4px 12px rgba(251, 191, 36, 0.08);
 }
 .host-card.defcon-5 {
-  border-right: 4px solid var(--ok);
+  border-color: #34d399;
+  box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.2);
 }
+/* DEFCON accent stripe at the top */
+.host-card::before {
+  content: '';
+  position: absolute;
+  top: 0; right: 0; left: 0;
+  height: 3px;
+}
+.host-card.defcon-1::before, .host-card.defcon-2::before { background: linear-gradient(90deg, #f87171, #ef4444); }
+.host-card.defcon-3::before, .host-card.defcon-4::before { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+.host-card.defcon-5::before { background: linear-gradient(90deg, #34d399, #10b981); }
+
 .host-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #334155;
 }
 .host-name {
   font-weight: 700;
-  font-size: 16px;
-  color: var(--fg);
+  font-size: 17px;
+  color: #f1f5f9;
+  letter-spacing: -0.01em;
 }
 .defcon-badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-weight: 700;
-  font-size: 13px;
-  min-width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 14px;
+  min-width: 36px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
-.defcon-badge.defcon-1, .defcon-badge.defcon-2 { background: var(--danger); color: white; }
-.defcon-badge.defcon-3, .defcon-badge.defcon-4 { background: var(--warning); color: #000; }
-.defcon-badge.defcon-5 { background: var(--ok); color: white; }
+.defcon-badge.defcon-1, .defcon-badge.defcon-2 { background: #dc2626; color: white; box-shadow: 0 0 8px rgba(220, 38, 38, 0.6); }
+.defcon-badge.defcon-3, .defcon-badge.defcon-4 { background: #f59e0b; color: #1f2937; box-shadow: 0 0 8px rgba(245, 158, 11, 0.5); }
+.defcon-badge.defcon-5 { background: #10b981; color: white; box-shadow: 0 0 8px rgba(16, 185, 129, 0.5); }
 
 .host-modules {
   display: flex;

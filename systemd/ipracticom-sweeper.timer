@@ -1,6 +1,6 @@
 [Unit]
 Description=iPracticom Sweeper - run health check every 5 minutes
-Documentation=https://github.com/dizeldz20-ux/ipracticom-voice-agent
+Documentation=https://github.com/dizeldz20-ux/ipracticom-sweeper-private
 
 [Timer]
 # Run 2 minutes after boot, then every 5 minutes
