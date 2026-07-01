@@ -3,7 +3,7 @@
 #
 # Usage:
 #   curl -sSL https://raw.githubusercontent.com/dizeldz20-ux/ipracticom-sweeper-private/master/install.sh | sudo bash
-#   sudo SWEEPER_BRANCH=v0.6.0 bash install.sh     # pin to a tag/branch
+#   sudo SWEEPER_BRANCH=v0.6.1 bash install.sh     # pin to a tag/branch
 #   sudo bash install.sh --uninstall               # remove
 #
 # What it does (all in one shot, idempotent):
@@ -74,12 +74,12 @@ for arg in "$@"; do
 iPracticom Sweeper one-liner installer
 
 Usage:
-  sudo bash $0              # install v0.6.0
+  sudo bash $0              # install v0.6.1
   sudo SWEEPER_BRANCH=master bash $0
   sudo bash $0 --uninstall
 
 Env overrides:
-  SWEEPER_BRANCH=...    git ref to install (default: v0.6.0, use master for bleeding-edge)
+  SWEEPER_BRANCH=...    git ref to install (default: v0.6.1, use master for bleeding-edge)
   SWEEPER_INSTALL_DIR=...  where to clone (default: /opt/ipracticom-sweeper)
 
 Repo: $REPO_URL
