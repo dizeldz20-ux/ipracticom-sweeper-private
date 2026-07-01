@@ -419,3 +419,260 @@ def execute_repair(action: str, **kwargs) -> RepairResult:
 
 def list_available_repairs() -> list[str]:
     return sorted(REPAIRS.keys())
+
+
+# --- Sprint 15 — 5 additional repair actions --------------------------------
+# These complement the built-in actions with common operational repairs
+# we discovered were missing while running the sweeper on a real PBX.
+
+@register("dns_cache_purge")
+def repair_dns_cache_purge(service: str = "nscd") -> RepairResult:
+    """Purge the DNS cache (nscd / systemd-resolved / dnsmasq).
+
+    SAFE: just invalidates cache, no permanent change.
+    Default service is nscd; pass systemd-resolved for that resolver.
+    """
+    snap = _new_snapshot(
+        action="dns_cache_purge",
+        target=f"service={service}",
+        pre_dns_status=_dns_cache_status(service),
+    )
+    snap.save()
+
+    start = time.time()
+    try:
+        result = subprocess.run(
+            ["systemctl", "restart", service],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        duration = int((time.time() - start) * 1000)
+        success = result.returncode == 0
+        return RepairResult(
+            action="dns_cache_purge",
+            target=service,
+            success=success,
+            snapshot_id=snap.id,
+            message=f"DNS cache ({service}) {'purged' if success else 'restart failed'}",
+            duration_ms=duration,
+            error=result.stderr if not success else None,
+        )
+    except subprocess.TimeoutExpired:
+        return RepairResult(
+            action="dns_cache_purge",
+            target=service,
+            success=False,
+            snapshot_id=snap.id,
+            message="DNS cache purge timed out",
+            duration_ms=15000,
+            error="timeout after 15s",
+        )
+
+
+@register("fs_inode_warn_clear")
+def repair_fs_inode_warn_clear() -> RepairResult:
+    """Clear stale inode-warn entries from the sweeper's local cache.
+
+    SAFE: only modifies sweeper's own state, not the filesystem.
+    Forces a re-scan of the most-monitored dir on next check.
+    """
+    snap = _new_snapshot(
+        action="fs_inode_warn_clear",
+        target="local cache",
+        cleared_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    # Find and clear the inode-warn sidecar if it exists
+    state_root = _BASE_STATE
+    inode_cache = state_root / "cache" / "inode_warn.json"
+    if inode_cache.exists():
+        try:
+            snap.metadata["pre_size_bytes"] = inode_cache.stat().st_size
+            inode_cache.unlink()
+        except OSError as e:
+            duration = 0
+            return RepairResult(
+                action="fs_inode_warn_clear",
+                target="local cache",
+                success=False,
+                snapshot_id=snap.id,
+                message=f"Could not clear inode cache: {e}",
+                duration_ms=duration,
+                error=str(e),
+            )
+
+    snap.save()
+    return RepairResult(
+        action="fs_inode_warn_clear",
+        target="local cache",
+        success=True,
+        snapshot_id=snap.id,
+        message="Inode warn cache cleared (next check will re-scan)",
+        duration_ms=1,
+    )
+
+
+@register("rotate_audit_now")
+def repair_rotate_audit_now(state_dir: str = "") -> RepairResult:
+    """Force a synchronous audit-log rotation.
+
+    SAFE under the rotation policy (cascades gzipped copies, never deletes
+    the live log). Calls audit_rotate() from the audit module if available.
+    """
+    state_root = Path(state_dir) if state_dir else _BASE_STATE
+    snap = _new_snapshot(
+        action="rotate_audit_now",
+        target=str(state_root),
+        pre_audit_size=_audit_log_size(state_root),
+    )
+    snap.save()
+
+    start = time.time()
+    try:
+        from ipracticom_sweeper.audit.rotation import audit_rotate
+        rotated = audit_rotate(state_root)
+    except Exception as e:
+        return RepairResult(
+            action="rotate_audit_now",
+            target=str(state_root),
+            success=False,
+            snapshot_id=snap.id,
+            message=f"audit_rotate import/call failed: {e}",
+            duration_ms=int((time.time() - start) * 1000),
+            error=str(e),
+        )
+    duration = int((time.time() - start) * 1000)
+    return RepairResult(
+        action="rotate_audit_now",
+        target=str(state_root),
+        success=True,
+        snapshot_id=snap.id,
+        message=f"Rotated audit log; {rotated} files affected",
+        duration_ms=duration,
+        output=str(rotated),
+    )
+
+
+@register("telegram_token_revalidate")
+def repair_telegram_token_revalidate() -> RepairResult:
+    """Force a re-validation of the Telegram bot token.
+
+    SAFE: pure probe. No state changes outside the sweeper's tracker.
+    """
+    snap = _new_snapshot(
+        action="telegram_token_revalidate",
+        target="telegram_bot_token",
+        probe_initiated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    snap.save()
+    start = time.time()
+    try:
+        from ipracticom_sweeper.telegram_bot.health import (
+            TokenHealthTracker,
+            resolve_token,
+            probe_bot_token,
+        )
+        token = resolve_token()
+        if not token:
+            return RepairResult(
+                action="telegram_token_revalidate",
+                target="telegram_bot_token",
+                success=False,
+                snapshot_id=snap.id,
+                message="No Telegram token configured",
+                duration_ms=int((time.time() - start) * 1000),
+            )
+        result = probe_bot_token(token)
+        tracker = TokenHealthTracker(state_dir=_BASE_STATE)
+        tracker.record(
+            status=result.status,
+            error_code=result.error_code,
+            bot_username=result.bot_username,
+        )
+        ok = result.status == "ok"
+        duration = int((time.time() - start) * 1000)
+        return RepairResult(
+            action="telegram_token_revalidate",
+            target="telegram_bot_token",
+            success=ok,
+            snapshot_id=snap.id,
+            message=(f"Token valid: @{result.bot_username}" if ok
+                     else f"Token probe failed: {result.error}"),
+            duration_ms=duration,
+        )
+    except Exception as e:
+        return RepairResult(
+            action="telegram_token_revalidate",
+            target="telegram_bot_token",
+            success=False,
+            snapshot_id=snap.id,
+            message=f"probe error: {e}",
+            duration_ms=int((time.time() - start) * 1000),
+            error=str(e),
+        )
+
+
+@register("self_healthz_ping")
+def repair_self_healthz_ping() -> RepairResult:
+    """Ping our own /healthz endpoint to confirm liveness.
+
+    SAFE: pure HTTP GET against localhost. Returns latency as metadata.
+    """
+    snap = _new_snapshot(
+        action="self_healthz_ping",
+        target="http://localhost:8000/healthz",
+        ping_at=datetime.now(timezone.utc).isoformat(),
+    )
+    snap.save()
+
+    start = time.time()
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://localhost:8000/healthz", timeout=5) as r:
+            status = r.status
+            body = r.read().decode("utf-8", errors="replace")[:200]
+        duration = int((time.time() - start) * 1000)
+        snap.metadata["response_status"] = status
+        snap.metadata["response_body_preview"] = body
+        return RepairResult(
+            action="self_healthz_ping",
+            target="http://localhost:8000/healthz",
+            success=(status == 200),
+            snapshot_id=snap.id,
+            message=f"/healthz returned {status} in {duration}ms",
+            duration_ms=duration,
+            output=body,
+        )
+    except Exception as e:
+        duration = int((time.time() - start) * 1000)
+        return RepairResult(
+            action="self_healthz_ping",
+            target="http://localhost:8000/healthz",
+            success=False,
+            snapshot_id=snap.id,
+            message=f"healthz ping failed: {e}",
+            duration_ms=duration,
+            error=str(e),
+        )
+
+
+# --- Helpers used by Sprint 15 repairs --------------------------------------
+
+def _dns_cache_status(service: str) -> str:
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", service],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return "unknown"
+
+
+def _audit_log_size(state_root: Path) -> int:
+    p = state_root / "audit" / "audit.jsonl"
+    try:
+        return p.stat().st_size if p.exists() else 0
+    except OSError:
+        return 0

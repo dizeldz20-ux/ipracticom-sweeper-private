@@ -72,7 +72,7 @@ def load_policy() -> dict[str, str]:
     if not isinstance(repairs_section, dict):
         repairs_section = {}
 
-    out: dict[str, str] = {}
+    out: dict[str, str] = {"__default__": default}
     for action, mode in repairs_section.items():
         m = str(mode).strip().lower()
         if m not in ("auto", "needs_approval"):
@@ -85,6 +85,7 @@ def needs_approval(action: str, policy: dict[str, str] | None = None) -> bool:
     """True if the action requires operator approval before execution."""
     p = policy if policy is not None else load_policy()
     if action not in p:
-        # Unknown repair → safe default = needs_approval (fail safe)
-        return True
+        # Unknown repair → use the global default; if policy is empty (file
+        # missing or no default set), fail safe = needs_approval.
+        return p.get("__default__", "needs_approval") == "needs_approval"
     return p[action] == "needs_approval"

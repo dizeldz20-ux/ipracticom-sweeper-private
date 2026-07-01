@@ -16,6 +16,12 @@ from ipracticom_sweeper.repair.actions import (
     repair_notify_human,
     repair_service_restart,
     repair_top_processes_snapshot,
+    # Sprint 15 additions
+    repair_dns_cache_purge,
+    repair_fs_inode_warn_clear,
+    repair_rotate_audit_now,
+    repair_telegram_token_revalidate,
+    repair_self_healthz_ping,
 )
 
 __all__ = [
@@ -29,4 +35,9 @@ __all__ = [
     "repair_notify_human",
     "repair_service_restart",
     "repair_top_processes_snapshot",
+    "repair_dns_cache_purge",
+    "repair_fs_inode_warn_clear",
+    "repair_rotate_audit_now",
+    "repair_telegram_token_revalidate",
+    "repair_self_healthz_ping",
 ]

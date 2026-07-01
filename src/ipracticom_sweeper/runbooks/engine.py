@@ -152,3 +152,59 @@ def zombie_processes_runbook() -> list[RunbookAction]:
             },
         ),
     ]
+
+
+def audit_pressure_runbook() -> list[RunbookAction]:
+    """Runbook triggered when audit log is near size limit (FS-13 warn/crit).
+
+    Pipeline: rotate audit now → vacuum journald → notify admin.
+    """
+    return [
+        RunbookAction(
+            name="rotate-audit",
+            action_type="repair",
+            params={"action": "rotate_audit_now"},
+        ),
+        RunbookAction(
+            name="vacuum-journald",
+            action_type="repair",
+            params={"action": "log_truncate_journald", "max_age_days": 14},
+        ),
+        RunbookAction(
+            name="notify-admin",
+            action_type="notify",
+            params={
+                "channel": "telegram",
+                "defcon": 3,
+                "summary": "audit log rotated due to size pressure",
+            },
+        ),
+    ]
+
+
+def self_health_recovery_runbook() -> list[RunbookAction]:
+    """Runbook triggered when self-monitor snapshot shows degraded health.
+
+    Pipeline: healthz ping → re-validate Telegram token → notify admin.
+    """
+    return [
+        RunbookAction(
+            name="healthz-ping",
+            action_type="repair",
+            params={"action": "self_healthz_ping"},
+        ),
+        RunbookAction(
+            name="revalidate-telegram",
+            action_type="repair",
+            params={"action": "telegram_token_revalidate"},
+        ),
+        RunbookAction(
+            name="notify-admin",
+            action_type="notify",
+            params={
+                "channel": "all",
+                "defcon": 4,
+                "summary": "self-monitor reported degraded health",
+            },
+        ),
+    ]

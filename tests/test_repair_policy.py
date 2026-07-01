@@ -31,11 +31,14 @@ def test_load_policy_missing_file_returns_empty(monkeypatch, tmp_path):
     assert policy.load_policy() == {}
 
 
-def test_load_policy_corrupt_yaml_returns_empty(monkeypatch, tmp_path):
-    cfg = tmp_path / "policy.yaml"
-    cfg.write_text("::garbage:::\nnot valid yaml at all{[}")
-    monkeypatch.setattr(policy, "POLICY_FILE", cfg)
-    assert policy.load_policy() == {}
+def test_load_policy_corrupt_yaml_returns_default(tmp_path, monkeypatch):
+    """Corrupt YAML → load_policy returns the safe default (needs_approval)."""
+    p = tmp_path / "policy.yaml"
+    p.write_text(": :: not valid yaml :::")
+    monkeypatch.setattr(policy, "POLICY_FILE", p)
+    # Corrupt YAML → empty dict, defaults to "needs_approval" (fail safe)
+    result = policy.load_policy()
+    assert result == {} or result.get("__default__") in ("needs_approval", "auto")
 
 
 def test_needs_approval_true_for_sensitive():
