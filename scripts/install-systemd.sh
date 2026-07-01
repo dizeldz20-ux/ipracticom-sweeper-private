@@ -55,10 +55,15 @@ done
 if [ "$ACTION" = "uninstall" ]; then
     log "Uninstalling ipracticom-sweeper services..."
     # Stop in reverse-start order
+    systemctl stop ipracticom-sweeper-watchdog.timer 2>/dev/null || true
     systemctl stop ipracticom-sweeper-api.service 2>/dev/null || true
     systemctl stop ipracticom-sweeper.timer 2>/dev/null || true
+    systemctl disable ipracticom-sweeper-watchdog.timer 2>/dev/null || true
     systemctl disable ipracticom-sweeper-api.service 2>/dev/null || true
     systemctl disable ipracticom-sweeper.timer 2>/dev/null || true
+    rm -f /etc/systemd/system/ipracticom-sweeper-watchdog.service
+    rm -f /etc/systemd/system/ipracticom-sweeper-watchdog.timer
+    rm -f /usr/local/bin/ipracticom-sweeper-watchdog.sh
     rm -f /etc/systemd/system/ipracticom-sweeper-api.service
     rm -f /etc/systemd/system/ipracticom-sweeper.service
     rm -f /etc/systemd/system/ipracticom-sweeper.timer
@@ -97,7 +102,7 @@ else
 fi
 
 log "Step 4/6: Installing systemd unit files..."
-for unit in ipracticom-sweeper.service ipracticom-sweeper.timer ipracticom-sweeper-api.service; do
+for unit in ipracticom-sweeper.service ipracticom-sweeper.timer ipracticom-sweeper-api.service ipracticom-sweeper-watchdog.service ipracticom-sweeper-watchdog.timer; do
     if [[ -f "$SYSTEMD_DIR/$unit" ]]; then
         cp "$SYSTEMD_DIR/$unit" /etc/systemd/system/
         chmod 644 "/etc/systemd/system/$unit"
@@ -106,6 +111,12 @@ for unit in ipracticom-sweeper.service ipracticom-sweeper.timer ipracticom-sweep
         fail "missing $SYSTEMD_DIR/$unit"
     fi
 done
+# Install the watchdog helper script
+if [[ -f "$SYSTEMD_DIR/ipracticom-sweeper-watchdog.sh" ]]; then
+    cp "$SYSTEMD_DIR/ipracticom-sweeper-watchdog.sh" /usr/local/bin/ipracticom-sweeper-watchdog.sh
+    chmod 755 /usr/local/bin/ipracticom-sweeper-watchdog.sh
+    log "  /usr/local/bin/ipracticom-sweeper-watchdog.sh"
+fi
 systemctl daemon-reload
 
 log "Step 5/6: Enabling + starting services..."
@@ -115,6 +126,9 @@ systemctl restart ipracticom-sweeper.timer
 # sweeper-api.service: long-running dashboard on :8787
 systemctl enable ipracticom-sweeper-api.service
 systemctl restart ipracticom-sweeper-api.service
+# sweeper-watchdog.timer: external watchdog for the API (every 60s)
+systemctl enable ipracticom-sweeper-watchdog.timer
+systemctl restart ipracticom-sweeper-watchdog.timer
 
 log "Step 6/6: Verifying..."
 sleep 2
@@ -126,6 +140,10 @@ if ! systemctl is-active --quiet ipracticom-sweeper-api.service; then
     fail "ipracticom-sweeper-api.service failed to start"
 fi
 log "  ✓ API service active"
+if ! systemctl is-active --quiet ipracticom-sweeper-watchdog.timer; then
+    fail "ipracticom-sweeper-watchdog.timer failed to start"
+fi
+log "  ✓ watchdog timer active"
 
 # Run once now so the user sees immediate output
 log "Triggering initial sweep..."

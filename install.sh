@@ -59,9 +59,13 @@ for arg in "$@"; do
             else
                 systemctl disable --now "${SERVICE_NAME}.timer" 2>/dev/null || true
                 systemctl disable --now "${SERVICE_NAME}-api.service" 2>/dev/null || true
+                systemctl disable --now "ipracticom-sweeper-watchdog.timer" 2>/dev/null || true
                 rm -f "/etc/systemd/system/${SERVICE_NAME}.service" \
                       "/etc/systemd/system/${SERVICE_NAME}.timer" \
-                      "/etc/systemd/system/${SERVICE_NAME}-api.service"
+                      "/etc/systemd/system/${SERVICE_NAME}-api.service" \
+                      "/etc/systemd/system/ipracticom-sweeper-watchdog.service" \
+                      "/etc/systemd/system/ipracticom-sweeper-watchdog.timer" \
+                      "/usr/local/bin/ipracticom-sweeper-watchdog.sh"
                 systemctl daemon-reload || true
             fi
             ok "systemd units removed"
