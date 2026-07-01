@@ -84,63 +84,25 @@ def test_healthz_returns_ok(client):
 # --- Index (main page) -------------------------------------------------------
 
 
-def test_index_empty_state(client):
-    """No cached result → empty state."""
-    with patch("ipracticom_sweeper.dashboard._read_last_result", return_value=None):
-        rv = client.get("/")
+def test_index_renders_spa_shell(client):
+    """`/` now renders the unified SPA shell with the AI Studio design.
+
+    The home uses its own thin template (`home.html`) that extends the shell;
+    /spa/a and /spa/b stay self-contained for visual A/B comparison.
+    """
+    rv = client.get("/")
     assert rv.status_code == 200
     body = rv.get_data(as_text=True)
-    assert "עדיין אין תוצאות סריקה" in body
-    assert "סוויפר iPracticom" in body  # brand
-
-
-def test_index_with_cached_result(client, cached_result):
-    with patch("ipracticom_sweeper.dashboard._read_last_result", return_value=cached_result):
-        rv = client.get("/")
-    assert rv.status_code == 200
-    body = rv.get_data(as_text=True)
-    assert 'defcon-banner yellow' in body
-    assert 'defcon-badge">רמה 4' in body
-    assert "yellow" in body
-    assert "1 warning" in body
-    assert "disk_expected_ro_missing" in body
-    # Module grid
-    assert "cpu" in body
-    assert "memory" in body
-    assert "disk" in body
-    # Sidebar rules
-    assert "ספי התראה פעילים" in body
-
-
-def test_index_shows_repair_results(client, cached_result):
-    cached_result["repair_results"] = [
-        {
-            "action": "drop_caches",
-            "target": "level=3",
-            "success": True,
-            "message": "ok",
-            "duration_ms": 5,
-            "snapshot_id": "abc",
-            "error": None,
-            "rollback_available": False,
-        }
-    ]
-    with patch("ipracticom_sweeper.dashboard._read_last_result", return_value=cached_result):
-        rv = client.get("/")
-    body = rv.get_data(as_text=True)
-    assert "drop_caches" in body
-    assert "תיקונים שבוצעו" in body
-
-
-def test_index_renders_for_each_defcon_level(client, cached_result):
-    """Sanity check that each defcon_label produces a banner class."""
-    for label in ["green", "yellow", "orange", "red", "black"]:
-        cached_result["defcon_label"] = label
-        cached_result["defcon"] = {"green": 5, "yellow": 4, "orange": 3, "red": 2, "black": 1}[label]
-        with patch("ipracticom_sweeper.dashboard._read_last_result", return_value=cached_result):
-            rv = client.get("/")
-        body = rv.get_data(as_text=True)
-        assert f'defcon-banner {label}' in body, f"missing banner class for {label}"
+    # Unified shell markers (base_spa.html provides these)
+    assert 'data-shell="spa"' in body
+    assert "spa-topnav" in body
+    assert "spa-sidebar" in body
+    # 9 nav links still all there
+    for href in ("/", "/history", "/approvals", "/settings", "/settings/connectors",
+                 "/fleet", "/inspector", "/catalogue", "/chat"):
+        assert f'href="{href}"' in body
+    # Home must surface real data from the shape_spa_context result
+    assert "מודולים פעילים" in body or "מבט על המערכת" in body
 
 
 # --- Run JSON ----------------------------------------------------------------

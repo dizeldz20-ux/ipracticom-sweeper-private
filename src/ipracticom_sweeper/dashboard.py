@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, abort, jsonify, render_template, request
+from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
 from ipracticom_sweeper.agent_client import AgentClient, AgentError
 from ipracticom_sweeper.spa_context import shape_spa_context
@@ -457,21 +457,13 @@ def _test_slack(webhook_url: str) -> tuple[bool, str]:
 
 @app.route("/")
 def index():
-    """Main dashboard — single-page view of the latest sweep."""
-    result = _fetch_snapshot()
-    identity = _fetch_identity()
-    rules_summary = _fetch_rules_summary()
-    heartbeat = _fetch_heartbeat()
+    """Main dashboard — the unified SPA shell (AI Studio design) with real
+    snapshot data from the agent.
 
-    return render_template(
-        "dashboard.html",
-        result=result,
-        identity=identity,
-        is_remote=_is_remote_mode(),
-        rules_summary=rules_summary,
-        heartbeat=heartbeat,
-        now_iso=datetime.now(timezone.utc).isoformat(),
-    )
+    /spa/a and /spa/b still exist for the side-by-side A/B comparison.
+    """
+    ctx = shape_spa_context(_fetch_snapshot())
+    return render_template("home.html", ctx=ctx)
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -604,8 +596,11 @@ def api_snapshot():
 
 @app.route("/spa")
 def spa_chooser():
-    """Landing page to pick between the two dashboard SPA variants."""
-    return render_template("spa_chooser.html")
+    """Legacy chooser — A is now the design of record, redirect to root.
+
+    /spa/a and /spa/b remain available for visual A/B review.
+    """
+    return redirect(url_for("index"))
 
 
 @app.route("/spa/a")
@@ -1340,22 +1335,10 @@ def healthz():
 def _load_history_runs() -> list[dict]:
     """Load recent sweep results from the monitor audit log."""
     if _is_remote_mode():
-        try:
-            raw_events = _get_agent().get_audit_events()
-            runs = []
-            for line in raw_events:
-                try:
-                    ev = json.loads(line)
-                    runs.append({
-                        "ts": ev.get("ts", ""),
-                        "module": ev.get("module", ""),
-                        "status": ev.get("status", ""),
-                    })
-                except json.JSONDecodeError:
-                    continue
-            return runs
-        except AgentError:
-            return []
+        # AgentClient has no get_audit_events method (pre-existing gap).
+        # Return an empty list rather than 500ing the page; the operator can
+        # still see /run/now + /api/snapshot for live data.
+        return []
 
     audit_log = Path("/var/lib/ipracticom-sweeper/audit/monitor.jsonl")
     if not audit_log.exists():

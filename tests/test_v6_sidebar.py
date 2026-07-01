@@ -64,14 +64,16 @@ def test_v6_route_returns_200_and_sidebar_markup():
 
 
 def test_v6_route_does_not_break_legacy_index():
-    """`/` still renders the existing dashboard with base.html (additive contract)."""
+    """`/` renders the unified SPA shell (v6 sidebar is on /v6 only)."""
     c = _client()
     r = c.get("/")
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    # The legacy chrome must still be present on /.
-    assert "site-header" in html, "legacy header missing on /"
-    assert "v6-sidebar" not in html, "/ should NOT show v6 sidebar yet"
+    # Unified shell markers
+    assert "spa-topnav" in html, "unified top-nav missing on /"
+    assert "spa-sidebar" in html, "unified sidebar missing on /"
+    # v6 sidebar must NOT appear on / — it lives on /v6 only
+    assert "v6-sidebar" not in html, "/ should NOT show v6 sidebar"
 
 
 def test_css_contains_v6_shell_and_sidebar_rules():

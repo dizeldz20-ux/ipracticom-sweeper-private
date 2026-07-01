@@ -125,12 +125,10 @@ def test_normalizes_critical_to_crit():
 
 
 def test_spa_chooser_renders(client):
-    resp = client.get("/spa")
-    assert resp.status_code == 200
-    body = resp.get_data(as_text=True)
-    assert "בחר גרסת דשבורד" in body
-    assert "/spa/a" in body
-    assert "/spa/b" in body
+    """A won the A/B, so /spa now redirects to / (the unified shell)."""
+    resp = client.get("/spa", follow_redirects=False)
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/")
 
 
 def test_spa_variant_a_renders_real_data(client, snapshot):
@@ -197,22 +195,10 @@ NAV_LINKS = [
 ]
 
 
-@pytest.mark.parametrize("href,label", NAV_LINKS)
-def test_variant_a_includes_top_nav_link(client, snapshot, href, label):
-    with patch("ipracticom_sweeper.dashboard._fetch_snapshot", return_value=snapshot):
-        resp = client.get("/spa/a")
-    body = resp.get_data(as_text=True)
-    assert f'href="{href}"' in body, f"variant A missing nav link to {href}"
-    assert label in body, f"variant A missing nav label {label}"
-
-
-@pytest.mark.parametrize("href,label", NAV_LINKS)
-def test_variant_b_includes_top_nav_link(client, snapshot, href, label):
-    with patch("ipracticom_sweeper.dashboard._fetch_snapshot", return_value=snapshot):
-        resp = client.get("/spa/b")
-    body = resp.get_data(as_text=True)
-    assert f'href="{href}"' in body, f"variant B missing nav link to {href}"
-    assert label in body, f"variant B missing nav label {label}"
+# Top-nav is provided by the unified shell (base_spa.html), tested in
+# test_spa_shell.py. The /spa/a and /spa/b variant templates are now
+# content-only — they don't carry their own top-nav. To inspect the
+# shell wrapping a variant, see test_spa_shell.py::test_spa_a_and_b_still_render.
 
 
 def test_top_nav_routes_all_reachable(client, snapshot):

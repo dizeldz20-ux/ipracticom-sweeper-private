@@ -77,13 +77,14 @@ def test_css_includes_table_rules():
 
 
 def test_v6_machines_does_not_break_legacy_fleet_route():
-    """`/fleet` still returns 200 unchanged."""
+    """`/fleet` returns 200 and now uses the unified SPA chrome."""
     c = _client()
     r = c.get("/fleet")
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    # Legacy chrome still present on /fleet.
-    assert "site-header" in html
+    # Unified SPA shell — replaces the legacy site-header.
+    assert "spa-topnav" in html
+    assert "spa-sidebar" in html
     assert "v6-sidebar" not in html
 
 

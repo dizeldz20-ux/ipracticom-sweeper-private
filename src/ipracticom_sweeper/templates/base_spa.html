@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}iPracticom Sweeper{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  /* --- Top nav (matches the legacy site-nav visual) ----------------------- */
+  .spa-topnav {
+    background: #0f172a; border-bottom: 1px solid #1e293b;
+    padding: 8px 16px; display: flex; gap: 4px; align-items: center;
+  }
+  .spa-topnav a {
+    font-size: 13px; font-weight: 500; color: #94a3b8;
+    padding: 6px 10px; border-radius: 4px; text-decoration: none;
+  }
+  .spa-topnav a:hover { background: #1e293b; color: #e2e8f0; }
+  .spa-topnav a.is-active { background: #312e81; color: #c7d2fe; }
+
+  /* --- Sidebar ----------------------------------------------------------- */
+  .spa-shell { display: flex; min-height: calc(100vh - 41px); }
+  .spa-sidebar {
+    width: 256px; background: #0f172a; border-left: 1px solid #1e293b;
+    padding: 24px 20px; display: flex; flex-direction: column; gap: 28px;
+  }
+  .spa-brand { display: flex; align-items: center; gap: 12px; }
+  .spa-brand-mark {
+    width: 32px; height: 32px; background: #4f46e5; border-radius: 8px;
+    display: grid; place-items: center;
+  }
+  .spa-brand-mark svg { width: 20px; height: 20px; color: white; }
+  .spa-brand-name { font-size: 1.125rem; font-weight: 700; color: white; letter-spacing: -0.01em; }
+
+  .spa-nav { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .spa-nav button, .spa-nav a {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-radius: 12px; font-size: 0.875rem; font-weight: 500; text-align: right;
+    color: #94a3b8; background: transparent; border: 1px solid transparent;
+    width: 100%; cursor: pointer; text-decoration: none;
+  }
+  .spa-nav button:hover, .spa-nav a:hover { background: #1e293b; color: #e2e8f0; }
+  .spa-nav a.is-active {
+    background: rgba(79, 70, 229, 0.10); color: #818cf8;
+    border-color: rgba(79, 70, 229, 0.20);
+  }
+  .spa-nav svg { width: 20px; height: 20px; opacity: 0.8; }
+
+  .spa-sidebar-foot {
+    margin-top: auto; padding: 14px; background: rgba(30, 41, 59, 0.5);
+    border: 1px solid #334155; border-radius: 14px; font-size: 0.75rem;
+  }
+  .spa-sidebar-foot .row { display: flex; align-items: center; justify-content: space-between; }
+  .spa-sidebar-foot .label { color: #64748b; }
+  .spa-sidebar-foot .val { color: #cbd5e1; margin-top: 6px; }
+  .spa-sidebar-foot .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #f59e0b; box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+  }
+
+  /* --- Main ------------------------------------------------------------- */
+  .spa-main { flex: 1; padding: 32px; overflow-y: auto; }
+
+  /* --- Generic page chrome (used by legacy templates) ------------------- */
+  .spa-page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 24px; }
+  .spa-page-title { font-size: 1.5rem; font-weight: 700; color: white; }
+  .spa-page-sub { color: #94a3b8; margin-top: 4px; font-size: 0.875rem; }
+
+  /* The legacy templates define their own `.page-header`, `.page-title`,
+     `.page-sub`, table classes, etc. The colors here just give them a
+     dark-mode home if they aren't already styled. */
+  body { background: #020617; color: #e2e8f0; }
+  main { color: #e2e8f0; }
+  .container { max-width: none; padding: 0; }
+  .site-footer { display: none; }
+  a { color: #818cf8; }
+  table { color: #e2e8f0; }
+  th { color: #cbd5e1; }
+  td, th { border-color: #1e293b; }
+  pre, code { background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b; border-radius: 6px; }
+  input, select, textarea {
+    background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px;
+    padding: 8px 12px;
+  }
+  button, .btn { background: #4f46e5; color: white; border-radius: 8px; padding: 8px 16px; font-weight: 500; }
+  button:hover, .btn:hover { background: #4338ca; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen" data-shell="spa">
+
+{# --- Top nav (full width, above the shell) ----------------------------- #}
+<nav class="spa-topnav">
+  <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}is-active{% endif %}">לוח בקרה</a>
+  <a href="{{ url_for('history') }}" class="{% if request.endpoint == 'history' %}is-active{% endif %}">היסטוריה</a>
+  <a href="{{ url_for('approvals_view') }}" class="{% if request.endpoint and request.endpoint.startswith('approval') %}is-active{% endif %}">אישורים</a>
+  <a href="{{ url_for('settings') }}" class="{% if request.endpoint and request.endpoint.startswith('settings') %}is-active{% endif %}">הגדרות</a>
+  <a href="{{ url_for('settings_connectors') }}" class="{% if request.endpoint == 'settings_connectors' %}is-active{% endif %}">מחברים</a>
+  <a href="{{ url_for('fleet_view') }}" class="{% if request.endpoint and request.endpoint.startswith('fleet') %}is-active{% endif %}">צי</a>
+  <a href="{{ url_for('inspector_view') }}" class="{% if request.endpoint and request.endpoint.startswith('inspector') %}is-active{% endif %}">מפקח בדיקות</a>
+  <a href="{{ url_for('catalogue_view') }}" class="{% if request.endpoint and request.endpoint.startswith('catalogue') %}is-active{% endif %}">קטלוג</a>
+  <a href="{{ url_for('chat.chat_index') }}" class="{% if request.endpoint and request.endpoint.startswith('chat.') %}is-active{% endif %}">צ'אט</a>
+</nav>
+
+{# --- Shell: sidebar + main -------------------------------------------- #}
+<div class="spa-shell">
+
+  <aside class="spa-sidebar">
+    <div class="spa-brand">
+      <div class="spa-brand-mark">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      </div>
+      <span class="spa-brand-name">Sweeper</span>
+    </div>
+
+    <nav class="spa-nav">
+      <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5h16M4 12h16M4 19h16"/></svg>
+        <span>לוח בקרה</span>
+      </a>
+      <a href="{{ url_for('history') }}" class="{% if request.endpoint == 'history' %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span>היסטוריית אירועים</span>
+      </a>
+      <a href="{{ url_for('approvals_view') }}" class="{% if request.endpoint and request.endpoint.startswith('approval') %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span>אישורים</span>
+      </a>
+      <a href="{{ url_for('settings') }}" class="{% if request.endpoint and request.endpoint.startswith('settings') %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572-1.065c-.426-1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <span>הגדרות</span>
+      </a>
+    </nav>
+
+    <div class="spa-sidebar-foot">
+      <div class="row">
+        <span class="label">DEFCON</span>
+        <span class="dot"></span>
+      </div>
+      <div class="val mono">Sweeper Agent</div>
+    </div>
+  </aside>
+
+  <main class="spa-main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+</body>
+</html>
