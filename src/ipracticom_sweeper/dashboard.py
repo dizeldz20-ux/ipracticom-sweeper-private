@@ -896,6 +896,303 @@ def v6_machines_action(host: str):
     return jsonify({"ok": True, "queued": True, "proposal": proposal})
 
 
+@app.route("/v6/metrics/events_heatmap")
+def v6_metrics_events_heatmap():
+    """v0.6.0 — slice 7.3: 24h × 7d heatmap of event counts.
+
+    Returns a 7×24 grid (rows = days, cols = hours UTC) of event counts
+    aggregated from the monitor audit log. Empty grid when the log is
+    unavailable (no fabricated zeros).
+    """
+    days = 7
+    hours = 24
+    grid = [[0 for _ in range(hours)] for _ in range(days)]
+    audit = Path("/var/lib/ipracticom-sweeper/audit/monitor.jsonl")
+    if not audit.exists():
+        return jsonify({"grid": grid, "days": days, "hours": hours, "source": "no-data"})
+    from datetime import datetime as _dt
+    import json as _json
+    now_ts = datetime.now(timezone.utc).timestamp()
+    try:
+        with audit.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                ts_str = ev.get("ts", "")
+                if not ts_str:
+                    continue
+                try:
+                    ev_dt = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                delta_s = now_ts - ev_dt.timestamp()
+                if delta_s < 0 or delta_s > days * 24 * 3600:
+                    continue
+                day_idx = int(delta_s // (24 * 3600))     # 0 = today
+                hour_idx = ev_dt.hour
+                if 0 <= day_idx < days and 0 <= hour_idx < hours:
+                    grid[days - 1 - day_idx][hour_idx] += 1
+    except OSError as e:
+        app.logger.warning("v6_metrics_heatmap_read_failed: %s", e)
+    return jsonify({"grid": grid, "days": days, "hours": hours, "source": str(audit)})
+
+
+@app.route("/v6/metrics/uptime_30d")
+def v6_metrics_uptime_30d():
+    """v0.6.0 — slice 7.3: 30-day uptime area data.
+
+    Per-day ratio of non-critical events. Reads from the same audit log.
+    Returns a list of 30 {date, ratio} entries (newest last).
+    """
+    days = 30
+    out = []
+    audit = Path("/var/lib/ipracticom-sweeper/audit/monitor.jsonl")
+    if not audit.exists():
+        return jsonify({"points": out, "days": days, "source": "no-data"})
+    from collections import Counter
+    from datetime import datetime as _dt
+    import json as _json
+    per_day = Counter()
+    crit_per_day = Counter()
+    now = datetime.now(timezone.utc)
+    cutoff = now - _td(days=days)
+    try:
+        with audit.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = _json.loads(line)
+                except _json.JSONDecodeError:
+                    continue
+                ts_str = ev.get("ts", "")
+                if not ts_str:
+                    continue
+                try:
+                    ev_dt = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if ev_dt.tzinfo is None:
+                    ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+                if ev_dt < cutoff:
+                    continue
+                key = ev_dt.date().isoformat()
+                per_day[key] += 1
+                if (ev.get("status") or "").lower() in ("crit", "red", "orange"):
+                    crit_per_day[key] += 1
+    except OSError as e:
+        app.logger.warning("v6_metrics_uptime_read_failed: %s", e)
+    # Build day-by-day series even on days with no events (ratio=1.0).
+    for d in range(days - 1, -1, -1):
+        day = (now - _td(days=d)).date().isoformat()
+        total = per_day.get(day, 0)
+        crit = crit_per_day.get(day, 0)
+        ratio = 1.0 - (crit / total) if total > 0 else 1.0
+        out.append({"date": day, "ratio": round(ratio, 3)})
+    return jsonify({"points": out, "days": days, "source": str(audit)})
+
+
+from datetime import timedelta as _td  # noqa: E402  (used by 7.3 endpoints above)
+
+
+@app.route("/v6/metrics/page")
+def v6_metrics_page():
+    """v0.6.0 — slice 7.3: HTML wrapper around /v6/metrics/* JSON."""
+    return render_template(
+        "v6_metrics.html",
+        identity=_fetch_identity(),
+        is_remote=_is_remote_mode(),
+        now_iso=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@app.route("/v6/logs")
+def v6_logs():
+    """v0.6.0 — slice 7.2: tail the agent's monitor log.
+
+    Returns JSON with the LAST N lines from the chosen log file. Defaults to
+    the FreeSWITCH log if present; otherwise falls back to the sweeper's own
+    monitor audit log. Pure read — never touch the host.
+    """
+    target = _pick_v6_log_target()
+    lines = _tail_log_file(target, max_lines=200)
+    return jsonify({
+        "log": target.name if target else None,
+        "log_path": str(target) if target else None,
+        "lines": lines,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def _pick_v6_log_target() -> Path | None:
+    """Pick the best-available log to tail.
+
+    Priority: FreeSWITCH log if it exists, else sweeper monitor audit.
+    Returns None if neither is reachable.
+    """
+    for path in (
+        Path("/var/log/freeswitch/freeswitch.log"),
+        Path("/var/log/freeswitch/freeswitch.log.1"),
+        Path("/var/lib/ipracticom-sweeper/audit/monitor.jsonl"),
+    ):
+        try:
+            if path.exists() and path.is_file():
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def _tail_log_file(path: Path | None, max_lines: int = 200) -> list[str]:
+    """Return the last N lines of `path` as a list of strings (no NL)."""
+    if path is None or not path.exists():
+        return []
+    try:
+        # Efficient tail: seek to ~64KB from EOF for big logs.
+        size = path.stat().st_size
+        chunk = 64 * 1024
+        with path.open("rb") as f:
+            if size > chunk:
+                f.seek(size - chunk)
+                f.readline()  # skip partial line at boundary
+            data = f.read().decode("utf-8", errors="replace")
+        return data.splitlines()[-max_lines:]
+    except OSError:
+        return []
+
+
+@app.route("/v6/logs/page")
+def v6_logs_page():
+    """v0.6.0 — slice 7.2: HTML wrapper around /v6/logs JSON."""
+    return render_template(
+        "v6_logs.html",
+        identity=_fetch_identity(),
+        is_remote=_is_remote_mode(),
+        now_iso=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@app.route("/v6/alerts")
+def v6_alerts():
+    """v0.6.0 — slice 7.1: live alerts feed.
+
+    Aggregates recent non-ok events from the monitor audit log. Read-only in
+    this slice — snooze/mark-resolved arrive in slice 7.2 via the existing
+    approvals gate. Tabs in the URL (?tab=network|performance|security|system)
+    filter the visible events. Polled client-side every 5s by `/_v6/alerts.js`.
+    """
+    runs = _load_history_runs()
+    # Map events to "alerts" (status != ok). `ts` is an ISO string.
+    alerts = []
+    for r in runs:
+        status = (r.get("status") or "").lower()
+        if status in ("crit", "warn", "yellow", "red", "orange"):
+            alerts.append({
+                "ts": r.get("ts", ""),
+                "module": r.get("module", "?"),
+                "status": status,
+                "host": r.get("host", "—") if isinstance(r, dict) else "—",
+            })
+    # Heuristic tab classification (by module keyword).
+    def classify(mod: str) -> str:
+        m = (mod or "").lower()
+        if any(t in m for t in ("net", "dns", "tcp", "udp", "socket", "port", "ssl")):
+            return "network"
+        if any(t in m for t in ("cpu", "mem", "disk", "io", "swap", "monitor")):
+            return "performance"
+        if any(t in m for t in ("auth", "ssh", "sudo", "sec", "fail2ban")):
+            return "security"
+        if any(t in m for t in ("fs", "freeswitch", "sip", "rtp", "pbx")):
+            return "system"
+        return "other"
+
+    for a in alerts:
+        a["tab"] = classify(a["module"])
+
+    tab = (request.args.get("tab") or "all").lower()
+    if tab != "all":
+        alerts = [a for a in alerts if a["tab"] == tab]
+
+    crit_count = sum(1 for a in alerts if a["status"] in ("crit", "red", "orange"))
+    return jsonify({
+        "alerts": alerts[:50],          # cap
+        "tab": tab,
+        "count": len(alerts),
+        "crit_count": crit_count,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.route("/v6/alerts/page")
+def v6_alerts_page():
+    """v0.6.0 — slice 7.1: HTML wrapper around /v6/alerts JSON."""
+    return render_template(
+        "v6_alerts.html",
+        identity=_fetch_identity(),
+        is_remote=_is_remote_mode(),
+        now_iso=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@app.route("/v6/alerts/<alert_id>/resolve", methods=["POST"])
+def v6_alerts_resolve(alert_id: str):
+    """v0.6.0 — slice 7.1: enqueue a 'mark resolved' proposal (approval-gated).
+
+    Body may include a free-text `note` describing the resolution.
+    The destructive-op rule: this slice writes a RepairProposal that the
+    operator approves via /approvals/<pid>/approve. No mutation here.
+    """
+    if _is_remote_mode():
+        return jsonify({"ok": False, "error": "alerts local-only"}), 400
+    note = (request.form.get("note") or "").strip()[:500]
+    from ipracticom_sweeper.repair.pending import create_proposal
+    p = create_proposal(
+        action="mark_resolved",
+        kwargs={"alert_id": alert_id},
+        reason=note or f"mark-resolved requested for alert {alert_id} via v6 alerts",
+        problem={"alert_id": alert_id, "source": "v6_alerts"},
+        proposed_command=f"# mark alert {alert_id} resolved (operator note: {note!r})",
+    )
+    return jsonify({"ok": True, "queued": True, "proposal": p.to_dict()})
+
+
+@app.route("/v6/alerts/<alert_id>/snooze", methods=["POST"])
+def v6_alerts_snooze(alert_id: str):
+    """v0.6.0 — slice 7.1: enqueue a snooze proposal (approval-gated).
+
+    Body: `duration_min` ∈ {15, 60, 1440}. Validated.
+    """
+    if _is_remote_mode():
+        return jsonify({"ok": False, "error": "alerts local-only"}), 400
+    raw = request.form.get("duration_min", "60")
+    try:
+        dur = int(raw)
+    except ValueError:
+        return jsonify({"ok": False, "error": f"duration_min must be int, got {raw!r}"}), 400
+    if dur not in (15, 60, 1440):
+        return jsonify({
+            "ok": False,
+            "error": f"duration_min must be one of [15, 60, 1440], got {dur}",
+        }), 400
+    from ipracticom_sweeper.repair.pending import create_proposal
+    p = create_proposal(
+        action="snooze",
+        kwargs={"alert_id": alert_id, "duration_min": dur},
+        reason=f"snooze alert {alert_id} for {dur}min via v6 alerts",
+        problem={"alert_id": alert_id, "source": "v6_alerts"},
+        proposed_command=f"# snooze alert {alert_id} for {dur} minutes",
+    )
+    return jsonify({"ok": True, "queued": True, "proposal": p.to_dict()})
+
+
 @app.route("/v6/machines")
 def v6_machines():
     """v0.6.0 — slice 6.1: dark table view of the fleet.

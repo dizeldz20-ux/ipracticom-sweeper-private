@@ -20,6 +20,15 @@
     <a href="/v6/machines" class="v6-nav-item {{ 'active' if request.path == '/v6/machines' }}">
       <span class="v6-nav-dot"></span> מכונות
     </a>
+    <a href="/v6/alerts/page" class="v6-nav-item {{ 'active' if request.path == '/v6/alerts/page' }}">
+      <span class="v6-nav-dot"></span> התראות
+    </a>
+    <a href="/v6/logs/page" class="v6-nav-item {{ 'active' if request.path == '/v6/logs/page' }}">
+      <span class="v6-nav-dot"></span> לוג חי
+    </a>
+    <a href="/v6/metrics/page" class="v6-nav-item {{ 'active' if request.path == '/v6/metrics/page' }}">
+      <span class="v6-nav-dot"></span> מדדים
+    </a>
     <a href="{{ url_for('fleet_view') }}" class="v6-nav-item {{ 'active' if ep in ('fleet_view','fleet_host_detail') }}">
       <span class="v6-nav-dot"></span> צי שרתים
     </a>

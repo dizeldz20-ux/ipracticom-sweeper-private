@@ -1620,3 +1620,127 @@ main.container {
 .v6-maint-menu button:hover, .v6-actions-menu button:hover {
   background: var(--slate-800);
 }
+
+/* =====================================================================
+   v0.6.0 — slice 7.1: alerts tabs + live alert rows.
+   Polled client-side every 5s. snooze/resolve buttons are inline forms
+   that hit approval-gated endpoints — never destructive directly.
+===================================================================== */
+
+.v6-tabs {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.v6-tab {
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius-v6-pill);
+  border: 1px solid var(--slate-800);
+  color: var(--slate-400);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.v6-tab:hover { color: var(--slate-100); border-color: var(--slate-700); text-decoration: none; }
+.v6-tab.active {
+  background: var(--v6-indigo-soft);
+  color: var(--slate-100);
+  border-color: var(--v6-indigo);
+}
+
+.v6-alert-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--slate-800);
+  flex-wrap: wrap;
+}
+.v6-alert-row:last-child { border-bottom: none; }
+.v6-alert-row[data-status="crit"], .v6-alert-row[data-status="red"], .v6-alert-row[data-status="orange"] {
+  background: rgba(244, 63, 94, 0.05);
+}
+.v6-actions-inline { display: inline-flex; gap: 0.3rem; margin-inline-start: auto; }
+.v6-actions-inline button {
+  background: var(--slate-800);
+  border: 0;
+  color: var(--slate-200);
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.v6-actions-inline button:hover { background: var(--slate-700); }
+.v6-actions-inline button.v6-danger { color: var(--v6-rose); }
+
+/* =====================================================================
+   v0.6.0 — slice 7.2: live log viewer (read-only tail).
+===================================================================== */
+
+.v6-logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.v6-log-wrap {
+  max-height: 480px;
+  overflow-y: auto;
+  background: var(--slate-950);
+  border: 1px solid var(--slate-800);
+  border-radius: var(--radius-v6-card);
+}
+.v6-log-pre {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--slate-300);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+/* =====================================================================
+   v0.6.0 — slice 7.3: heatmap (24×7) + 30-day uptime area (inline SVG).
+   Pure HTML/CSS/SVG — zero JS frameworks, no Recharts.
+===================================================================== */
+
+.v6-heatmap-wrap { padding: 0.5rem; }
+.v6-heatmap {
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: 0.72rem;
+}
+.v6-heatmap th {
+  color: var(--slate-500);
+  padding: 0.15rem 0.3rem;
+  font-weight: 500;
+}
+.v6-heatmap td {
+  width: 22px; height: 22px;
+  text-align: center;
+  border-radius: 4px;
+  background: var(--slate-900);
+  color: var(--slate-300);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+}
+.v6-heatmap-legend {
+  display: flex; align-items: center; gap: 0.3rem;
+  margin-top: 0.6rem; padding-top: 0.5rem;
+  border-top: 1px solid var(--slate-800);
+  font-size: 0.75rem; color: var(--slate-500);
+}
+.v6-legend-cell {
+  width: 18px; height: 12px; border-radius: 3px;
+  border: 1px solid var(--slate-700);
+}
+.v6-legend-label { padding: 0 0.3rem; }
+
+.v6-uptime-wrap { padding: 0.5rem; }
+.v6-uptime-svg {
+  width: 100%; height: auto;
+  max-height: 140px;
+}
