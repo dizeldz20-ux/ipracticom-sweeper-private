@@ -12,22 +12,10 @@
   body { font-family: 'Inter', system-ui, sans-serif; }
   .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 
-  /* --- Top nav (matches the legacy site-nav visual) ----------------------- */
-  .spa-topnav {
-    background: #0f172a; border-bottom: 1px solid #1e293b;
-    padding: 8px 16px; display: flex; gap: 4px; align-items: center;
-  }
-  .spa-topnav a {
-    font-size: 13px; font-weight: 500; color: #94a3b8;
-    padding: 6px 10px; border-radius: 4px; text-decoration: none;
-  }
-  .spa-topnav a:hover { background: #1e293b; color: #e2e8f0; }
-  .spa-topnav a.is-active { background: #312e81; color: #c7d2fe; }
-
-  /* --- Sidebar ----------------------------------------------------------- */
-  .spa-shell { display: flex; min-height: calc(100vh - 41px); }
+  /* --- Sidebar (slice 3: top-nav removed; sidebar widened 256→288 to carry 9 items) - */
+  .spa-shell { display: flex; min-height: 100vh; }
   .spa-sidebar {
-    width: 256px; background: #0f172a; border-left: 1px solid #1e293b;
+    width: 288px; background: #0f172a; border-left: 1px solid #1e293b;
     padding: 24px 20px; display: flex; flex-direction: column; gap: 28px;
   }
   .spa-brand { display: flex; align-items: center; gap: 12px; }
@@ -90,24 +78,102 @@
   }
   button, .btn { background: #4f46e5; color: white; border-radius: 8px; padding: 8px 16px; font-weight: 500; }
   button:hover, .btn:hover { background: #4338ca; }
+
+  /* --- Slice 4: override layer so legacy chrome looks at home in the dark shell.
+     The CSS variables in style.css use light defaults; we re-bind them
+     to dark slate-900 cards + indigo/emerald accents.  All selectors
+     are gated under `.spa-main` so they never leak to legacy pages
+     served outside the SPA shell. -------------------------------------- */
+  .spa-main {
+    /* Surface tokens (re-bind of var(--surface) etc. for the SPA shell) */
+    --surface: #0f172a;
+    --surface-2: #1e293b;
+    --border: #1e293b;
+    --border-soft: #334155;
+    --text: #e2e8f0;
+    --text-mute: #94a3b8;
+    --accent: #34d399;       /* emerald-400 */
+    --accent-soft: rgba(52, 211, 153, 0.10);
+    --warning: #fbbf24;
+    --warning-soft: rgba(251, 191, 36, 0.12);
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.12);
+  }
+  .spa-main .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+  }
+  .spa-main .section-title {
+    font-size: 1.05rem; font-weight: 700; margin: 0 0 14px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--border-soft);
+    color: white; display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  }
+  .spa-main .section-title .count {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--text-mute); font-weight: 400;
+  }
+  .spa-main table { width: 100%; border-collapse: collapse; }
+  .spa-main th, .spa-main td {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    text-align: right; vertical-align: middle;
+  }
+  .spa-main th { color: #cbd5e1; font-weight: 600; font-size: 0.8125rem; }
+  .spa-main td { color: #e2e8f0; font-size: 0.875rem; }
+  .spa-main .catalogue-table td:first-child { font-weight: 600; color: white; }
+  .spa-main .catalogue-table tr:hover td { background: var(--surface-2); }
+  .spa-main .history-row {
+    display: grid; grid-template-columns: 200px 1fr 100px 120px;
+    gap: 14px; padding: 12px 16px; border-radius: 10px;
+    border: 1px solid transparent; align-items: center;
+  }
+  .spa-main .history-row:hover {
+    background: var(--surface-2); border-color: var(--border-soft);
+  }
+  .spa-main .history-row.history-head {
+    background: transparent; color: var(--text-mute); font-size: 0.75rem;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .spa-main .fleet-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 12px 16px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  .spa-main .fleet-row:hover { border-color: var(--border-soft); }
+  .spa-main .settings-form { display: flex; flex-direction: column; gap: 14px; }
+  .spa-main .settings-form label {
+    color: var(--text-mute); font-size: 0.8125rem; font-weight: 500;
+  }
+  .spa-main .settings-form input[type="url"],
+  .spa-main .settings-form input[type="text"],
+  .spa-main .settings-form input[type="number"],
+  .spa-main .settings-form select,
+  .spa-main .settings-form textarea {
+    width: 100%; padding: 10px 14px; background: var(--surface-2);
+    border: 1px solid var(--border-soft); border-radius: 8px;
+    color: var(--text); font-family: inherit; font-size: 0.875rem;
+  }
+  .spa-main .settings-form input:focus,
+  .spa-main .settings-form select:focus,
+  .spa-main .settings-form textarea:focus {
+    outline: none; border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.20);
+  }
+  /* Status badges → emerald/amber/red, consistent with sidebar active accent */
+  .spa-main .badge { display: inline-block; padding: 3px 9px; border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem; font-weight: 700;
+    text-transform: lowercase; }
+  .spa-main .badge.ok    { color: var(--accent);  background: var(--accent-soft); }
+  .spa-main .badge.warn  { color: var(--warning); background: var(--warning-soft); }
+  .spa-main .badge.crit  { color: var(--danger);  background: var(--danger-soft); }
 </style>
 </head>
 <body class="bg-slate-950 text-slate-200 min-h-screen" data-shell="spa">
 
-{# --- Top nav (full width, above the shell) ----------------------------- #}
-<nav class="spa-topnav">
-  <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}is-active{% endif %}">לוח בקרה</a>
-  <a href="{{ url_for('history') }}" class="{% if request.endpoint == 'history' %}is-active{% endif %}">היסטוריה</a>
-  <a href="{{ url_for('approvals_view') }}" class="{% if request.endpoint and request.endpoint.startswith('approval') %}is-active{% endif %}">אישורים</a>
-  <a href="{{ url_for('settings') }}" class="{% if request.endpoint and request.endpoint.startswith('settings') %}is-active{% endif %}">הגדרות</a>
-  <a href="{{ url_for('settings_connectors') }}" class="{% if request.endpoint == 'settings_connectors' %}is-active{% endif %}">מחברים</a>
-  <a href="{{ url_for('fleet_view') }}" class="{% if request.endpoint and request.endpoint.startswith('fleet') %}is-active{% endif %}">צי</a>
-  <a href="{{ url_for('inspector_view') }}" class="{% if request.endpoint and request.endpoint.startswith('inspector') %}is-active{% endif %}">מפקח בדיקות</a>
-  <a href="{{ url_for('catalogue_view') }}" class="{% if request.endpoint and request.endpoint.startswith('catalogue') %}is-active{% endif %}">קטלוג</a>
-  <a href="{{ url_for('chat.chat_index') }}" class="{% if request.endpoint and request.endpoint.startswith('chat.') %}is-active{% endif %}">צ'אט</a>
-</nav>
-
-{# --- Shell: sidebar + main -------------------------------------------- #}
+{# --- Shell: sidebar + main (sidebar carries all 9 nav items; top-nav removed in slice 3) --#}
 <div class="spa-shell">
 
   <aside class="spa-sidebar">
@@ -134,6 +200,27 @@
       <a href="{{ url_for('settings') }}" class="{% if request.endpoint and request.endpoint.startswith('settings') %}is-active{% endif %}">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572-1.065c-.426-1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
         <span>הגדרות</span>
+      </a>
+      {# --- slice 3: 5 entries migrated from removed spa-topnav -------------- #}
+      <a href="{{ url_for('settings_connectors') }}" class="{% if request.endpoint == 'settings_connectors' %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 015.656 0l1.415 1.415a4 4 0 010 5.656l-3 3a4 4 0 01-5.656 0M10.172 13.828a4 4 0 01-5.656 0l-1.415-1.415a4 4 0 010-5.656l3-3a4 4 0 015.656 0"/></svg>
+        <span>מחברים</span>
+      </a>
+      <a href="{{ url_for('fleet_view') }}" class="{% if request.endpoint and request.endpoint.startswith('fleet') %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0"/></svg>
+        <span>צי</span>
+      </a>
+      <a href="{{ url_for('inspector_view') }}" class="{% if request.endpoint and request.endpoint.startswith('inspector') %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <span>מפקח בדיקות</span>
+      </a>
+      <a href="{{ url_for('catalogue_view') }}" class="{% if request.endpoint and request.endpoint.startswith('catalogue') %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+        <span>קטלוג</span>
+      </a>
+      <a href="{{ url_for('chat.chat_index') }}" class="{% if request.endpoint and request.endpoint.startswith('chat.') %}is-active{% endif %}">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+        <span>צ'אט</span>
       </a>
     </nav>
 

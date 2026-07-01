@@ -83,7 +83,8 @@ def test_v6_machines_does_not_break_legacy_fleet_route():
     assert r.status_code == 200
     html = r.get_data(as_text=True)
     # Unified SPA shell — replaces the legacy site-header.
-    assert "spa-topnav" in html
+    # Slice 3 (2026-07-01): spa-topnav removed; sidebar now carries the 9 nav items.
+    assert "spa-nav" in html
     assert "spa-sidebar" in html
     assert "v6-sidebar" not in html
 

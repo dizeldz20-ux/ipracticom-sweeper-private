@@ -2,14 +2,14 @@
 
 The redesign wraps every legacy route (/, /history, /settings, /approvals,
 /fleet, /inspector, /catalogue, /chat) in a shared shell defined by
-``base_spa.html``: a full-width top nav with 9 links + a left sidebar +
-the page content. The shell must be present on EVERY page so the operator
-never feels a visual jump when clicking between sections.
+``base_spa.html``: a left sidebar carrying all 9 nav items (slice 3,
+2026-07-01) + the page content. The shell must be present on EVERY page
+so the operator never feels a visual jump when clicking between sections.
 
 These tests verify:
-  - Every legacy route renders the shared shell (spa-topnav, spa-sidebar,
+  - Every legacy route renders the shared shell (spa-nav, spa-sidebar,
     data-shell="spa" body attribute).
-  - Every page has all 9 top-nav links to other legacy routes.
+  - Every page has all 9 sidebar nav links to other legacy routes.
   - The /spa chooser redirects to / (the design of record won).
   - Settings/approvals in remote mode still render the shell even
     though they return 403 (the operator sees a styled error card).
@@ -46,7 +46,9 @@ REMOTE_PAGES = [
 ]
 
 
-# All 9 top-nav links (must match base_spa.html).
+# All 9 sidebar nav links (must match base_spa.html).
+# Slice 3: migrated from .spa-topnav (removed) into <nav class="spa-nav">
+# inside the sidebar, with SVG icons.
 NAV_LINKS = [
     ("/", "לוח בקרה"),
     ("/history", "היסטוריה"),
@@ -57,7 +59,7 @@ NAV_LINKS = [
     ("/inspector", "מפקח בדיקות"),
     ("/catalogue", "קטלוג"),
     ("/chat", "צ'אט"),
-]
+]  # 9 entries — sidebar widened from 256px→288px in slice 3.
 
 
 @pytest.mark.parametrize("path,expected_status", ALL_PAGES)
@@ -69,7 +71,7 @@ def test_every_legacy_page_renders_unified_shell(client, path, expected_status):
     )
     body = resp.get_data(as_text=True)
     assert 'data-shell="spa"' in body, f"{path} missing data-shell=spa"
-    assert 'spa-topnav' in body, f"{path} missing spa-topnav"
+    assert 'spa-nav' in body, f"{path} missing spa-nav"
     assert 'spa-sidebar' in body, f"{path} missing spa-sidebar"
 
 
@@ -82,17 +84,19 @@ def test_remote_mode_renders_shell_around_error(client, path, expected_status):
     assert resp.status_code == expected_status
     body = resp.get_data(as_text=True)
     assert 'data-shell="spa"' in body, f"{path} 403 body missing shell"
-    assert 'spa-topnav' in body, f"{path} 403 body missing top-nav"
+    assert 'spa-nav' in body, f"{path} 403 body missing sidebar-nav"
 
 
 @pytest.mark.parametrize("path,expected_status", ALL_PAGES)
-def test_every_page_has_all_9_top_nav_links(client, path, expected_status):
-    """Every page must carry the full top-nav to other legacy routes."""
+def test_every_page_has_all_9_nav_links(client, path, expected_status):
+    """Every page must carry the full 9-item sidebar nav to other legacy routes.
+
+    Slice 3: links live inside <nav class="spa-nav"> (formerly .spa-topnav)."""
     resp = client.get(path)
     body = resp.get_data(as_text=True)
     for href, label in NAV_LINKS:
         assert f'href="{href}"' in body, (
-            f"{path} missing top-nav link to {href}"
+            f"{path} missing nav link to {href}"
         )
 
 

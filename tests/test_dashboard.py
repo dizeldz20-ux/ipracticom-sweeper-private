@@ -95,7 +95,7 @@ def test_index_renders_spa_shell(client):
     body = rv.get_data(as_text=True)
     # Unified shell markers (base_spa.html provides these)
     assert 'data-shell="spa"' in body
-    assert "spa-topnav" in body
+    assert "spa-nav" in body
     assert "spa-sidebar" in body
     # 9 nav links still all there
     for href in ("/", "/history", "/approvals", "/settings", "/settings/connectors",

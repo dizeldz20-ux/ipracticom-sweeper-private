@@ -69,8 +69,8 @@ def test_v6_route_does_not_break_legacy_index():
     r = c.get("/")
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    # Unified shell markers
-    assert "spa-topnav" in html, "unified top-nav missing on /"
+    # Unified shell markers (slice 3, 2026-07-01: top-nav removed; sidebar carries nav)
+    assert "spa-nav" in html, "unified sidebar-nav missing on /"
     assert "spa-sidebar" in html, "unified sidebar missing on /"
     # v6 sidebar must NOT appear on / — it lives on /v6 only
     assert "v6-sidebar" not in html, "/ should NOT show v6 sidebar"

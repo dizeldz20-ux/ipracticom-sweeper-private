@@ -186,6 +186,65 @@ CHECK_REGISTRY: list[dict[str, Any]] = [
         "description_he": "Tier 4: גיבוי CDR, recordings, packet loss, jitter, codec, RSS, CPU, TCP retransmits, log errors, fail2ban.",
         "rule_keys": [],
     },
+    # v0.6.x: Catalogue parity — these modules are imported in monitor/checks.py
+    # but were not exposed via the catalogue UI.
+    {
+        "key": "aide",
+        "label_he": "AIDE — שלמות מערכת",
+        "description_he": "בדיקת שינויים בקבצים קריטיים מול בסיס AIDE. ריצה שגרתית אוטומטית + התראה כשיש drift חריג.",
+        "rule_keys": [
+            {"name": "critical_paths", "type": "list",
+             "description_he": "רשימת נתיבים שחייבים להיות ללא שינוי"},
+        ],
+    },
+    {
+        "key": "http",
+        "label_he": "בדיקות HTTP",
+        "description_he": "בדיקת endpoints חיצוניים — זמן תגובה, סטטוס, תקינות גוף התגובה.",
+        "rule_keys": [
+            {"name": "slow_response_ms", "type": "int",
+             "description_he": "סף זמן תגובה איטי (אלפיות שנייה)"},
+        ],
+    },
+    {
+        "key": "iostat",
+        "label_he": "I/O latency (iostat)",
+        "description_he": "זמני המתנה לדיסק (await) וניצול אחוזי לפי מכשיר. מתבסס על sysstat package.",
+        "rule_keys": [
+            {"name": "await_warn_ms", "type": "int",
+             "description_he": "סף אזהרה — await במילישניות"},
+            {"name": "await_crit_ms", "type": "int",
+             "description_he": "סף קריטי — await במילישניות"},
+            {"name": "util_warn_percent", "type": "float",
+             "description_he": "סף אזהרה — אחוז ניצול דיסק"},
+            {"name": "util_crit_percent", "type": "float",
+             "description_he": "סף קריטי — אחוז ניצול דיסק"},
+        ],
+    },
+    {
+        "key": "smart",
+        "label_he": "SMART — בריאות דיסקים",
+        "description_he": "מאפייני SMART — sectors מועברים מחדש, טמפרטורה, בריאות כללית. מתבסס על smartmontools.",
+        "rule_keys": [
+            {"name": "reallocated_warn", "type": "int",
+             "description_he": "סף אזהרה — sectors שהועברו מחדש"},
+            {"name": "reallocated_crit", "type": "int",
+             "description_he": "סף קריטי — sectors שהועברו מחדש"},
+            {"name": "temp_warn_c", "type": "int",
+             "description_he": "סף אזהורה — טמפרטורת דיסק ב-Celsius"},
+        ],
+    },
+    {
+        "key": "ssl",
+        "label_he": "תעודות SSL",
+        "description_he": "בדיקת תוקף תעודות TLS לרשימת hosts. התראה לפני תפוגה + קריטי ב-CertWindow קצר.",
+        "rule_keys": [
+            {"name": "warn_days", "type": "int",
+             "description_he": "סף אזהרה — ימים לפני פקיעת תעודה"},
+            {"name": "crit_days", "type": "int",
+             "description_he": "סף קריטי — ימים לפני פקיעת תעודה"},
+        ],
+    },
 ]  # v0.5.0 baseline (slice 1.x + Sprint 2 FS integration)
 
 
