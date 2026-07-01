@@ -53,6 +53,9 @@
     <a href="{{ url_for('settings_connectors') }}" class="v6-nav-item {{ 'active' if ep == 'settings_connectors' }}">
       <span class="v6-nav-dot"></span> מחברים
     </a>
+    <a href="/app" class="v6-nav-item {{ 'active' if request.path == '/app' }}" target="_blank" rel="noopener">
+      <span class="v6-nav-dot"></span> דאשבורד React
+    </a>
   </nav>
 
   <div class="v6-sidebar-status">

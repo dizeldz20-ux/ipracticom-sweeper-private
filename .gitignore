@@ -9,6 +9,8 @@ __pycache__/
 .eggs/
 build/
 dist/
+!.gitkeep
+!src/ipracticom_sweeper/webui/dist/
 .installed.cfg
 *.egg-link
 MANIFEST

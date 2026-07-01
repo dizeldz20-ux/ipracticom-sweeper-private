@@ -2,6 +2,25 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.3] — 2026-07-01 — React webui companion
+
+### Added
+- **React-based companion dashboard** (`/app`) built on Vite + React 19 + TailwindCSS 4, served by the same Flask app behind the existing `/v6/*` SSR surface. The bundle (`src/ipracticom_sweeper/webui/dist/`, ~672 KB JS + 38 KB CSS gzip 7/196) is built out-of-band by `scripts/build-webui.sh` (`npm ci && npm run build`) and is **fully optional** — when `webui/dist/index.html` is missing the server still works everywhere else, `/app` simply 404s.
+- **Upgraded React stack** (forked from `ipracticom-sweeper-dashboard` POC at the same v0.6.1 baseline): 14 widgets — Dashboard, Sidebar, History, Settings, MachineList, Approvals, Predictions, Evidence, Chat — with `recharts` sparklines + heatmap + uptime chart + log-stream, polls `/api/snapshot`, `/v6/alerts`, `/api/fleet` and `/v6/metrics/*` every 5–15 s. All `dataPolling` has graceful `.catch(ApiError 404 → null)` handling.
+- **Settings stubs** (`/api/settings/notifications` GET/PUT + `thresholds` + `filter_rules`) so the Settings tab renders with live env-var truthy detection (`TELEGRAM_BOT_TOKEN`, `SLACK_WEBHOOK_URL`) and live thresholds/filter-rules parsing from `repair_policy.yaml`. PUT is a no-op accepted ack; future work to persist.
+- **Sidebar link** "דאשבורד React" in `_v6_sidebar.html`, opens `/app` in a new tab.
+
+### Built infrastructure
+- `frontend/` (28 src files: 13 components + 5 hooks + DataContext + 6 services) with `package.json`, `vite.config.ts`, `tsconfig.json` and `index.html` (title → "iPracticom Sweeper").
+- `scripts/build-webui.sh` (auto-skipped if `frontend/package.json` missing) — produces `webui/dist/`.
+- `MANIFEST.in` updated to package `webui/dist/*` into the wheel.
+- Path-traversal guard on `/app/<path:filename>` refuses requests that escape `WEBUI_DIST`.
+
+### Tests
+- **1121 tests pass** (existing baseline, 0 failures, 0 new tests in this slice).
+  The React frontend is intentionally untested server-side; verification is a
+  200 + `<div id="root">` smoke against `/app` (see commit message).
+
 ## [0.6.2] — 2026-07-01 — SPA sidebar unification + tests
 
 ### Added

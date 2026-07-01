@@ -56,6 +56,12 @@ CACHE_DIR = Path("/var/lib/ipracticom-sweeper/cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 LAST_RESULT_FILE = CACHE_DIR / "last-result.json"
 
+# --- React webui (Vite build output) -----------------------------------------
+# Optional companion UI to the SSR /v6/* surface. The React bundle is built
+# out-of-band (`scripts/build-webui.sh`) and copied here at install time.
+# When missing, the server still runs — /app simply returns 404.
+WEBUI_DIST = Path(__file__).resolve().parent / "webui" / "dist"
+
 
 # --- Flask app ---------------------------------------------------------------
 
@@ -615,6 +621,154 @@ def spa_variant_b():
     """Variant B — impeccable-polished dashboard, rendered with real data."""
     ctx = shape_spa_context(_fetch_snapshot())
     return render_template("spa_variant_b.html", ctx=ctx)
+
+
+# --- React webui (/app/*) ----------------------------------------------------
+# Optional companion dashboard powered by a Vite-built React bundle.
+# The build artefact lives in src/ipracticom_sweeper/webui/dist/ and is
+# produced by `scripts/build-webui.sh` (npm ci && npm run build). When the
+# artefact is missing or has no index.html, /app returns 404 — every other
+# route still works.
+
+@app.route("/app")
+def webui_index():
+    """Serve the React SPA entry document."""
+    index = WEBUI_DIST / "index.html"
+    if not index.is_file():
+        abort(404, description="webui bundle not built; run scripts/build-webui.sh")
+    return index.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/app/<path:filename>")
+def webui_asset(filename):
+    """Serve every other file the bundle references (JS / CSS / assets/*)."""
+    target = (WEBUI_DIST / filename).resolve()
+    # Defence-in-depth: refuse to escape WEBUI_DIST.
+    try:
+        target.relative_to(WEBUI_DIST.resolve())
+    except ValueError:
+        abort(404)
+    if not target.is_file():
+        abort(404)
+    # Vite emits text/javascript / text/css / svg+xml; let Flask sniff it.
+    from flask import send_file
+    return send_file(target)
+
+
+# --- Settings stubs (so the React settings tab doesn't crash) ---------------
+# Real config lives in /etc/ipracticom-sweeper; for v0.6.3 expose read-only
+# placeholders so the React UI can render and the operator knows what to
+# configure via the env file / `sweeper config` CLI.
+import re as _re
+
+_SETTINGS_BOOL_KEYS = ("telegram_bot_token_set", "slack_webhook_set")
+
+
+def _settings_env_truthy(name: str) -> bool:
+    val = os.environ.get(name, "").strip()
+    return bool(val) and val not in ("***", "REDACTED")
+
+
+@app.route("/api/settings/notifications", methods=["GET", "PUT"])
+def api_settings_notifications():
+    if request.method == "PUT":
+        # Accept and silently apply — actual notification fan-out reads the
+        # env at notify-time, no restart required. Future: persist here.
+        return jsonify({"ok": True, "note": "settings apply at next notify cycle"})
+    return jsonify({
+        "telegram_bot_token_set": _settings_env_truthy("TELEGRAM_BOT_TOKEN"),
+        "telegram_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
+        "slack_webhook_set": _settings_env_truthy("SLACK_WEBHOOK_URL"),
+    })
+
+
+@app.route("/api/settings/notifications/test", methods=["POST"])
+def api_settings_notifications_test():
+    """Same as /api/notify/test — alias for the React SPA."""
+    return _api_notify_test_inner()
+
+
+# Reuse the same handler; exposed privately so the test endpoint matches React's path.
+def _api_notify_test_inner():
+    # When REMOTE_URL (etc.) is configured, forward; otherwise send locally.
+    try:
+        from ipracticom_sweeper.agent_client import AgentClient, AgentError as _AE
+        if _is_remote_mode():
+            try:
+                return jsonify(_get_agent().send_test_notify())
+            except _AE as e:  # noqa: F821
+                return jsonify({"error": str(e)}), 502
+    except Exception:
+        pass
+    import asyncio as _asyncio
+    result = _read_last_result()
+    if not result:
+        return jsonify({"error": "no cached result to use as template"}), 404
+    try:
+        from ipracticom_sweeper.notify import notify_pipeline_result
+        sent = _asyncio.run(notify_pipeline_result(result, force=True))
+        return jsonify({"sent": sent})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/settings/thresholds", methods=["GET"])
+def api_settings_thresholds():
+    """Return the thresholds actually in effect (read-only for the React UI)."""
+    rules_path = Path(os.environ.get(
+        "IPRACTICOM_SWEEPER_RULES",
+        "/etc/ipracticom-sweeper/repair_policy.yaml",
+    ))
+    cpu = {"warn": 80, "crit": 95}
+    mem = {"warn": 80, "crit": 95}
+    disk = {"warn": 80, "crit": 95}
+    if rules_path.is_file():
+        try:
+            import yaml as _yaml
+            raw = _yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+            thr = raw.get("thresholds") or {}
+            for k, d in (("cpu", cpu), ("memory", mem), ("disk", disk)):
+                if isinstance(thr.get(k), dict):
+                    for level in ("warn", "crit"):
+                        if isinstance(thr[k].get(level), (int, float)):
+                            d[level] = int(thr[k][level])
+        except Exception:
+            pass
+    return jsonify({"cpu": cpu, "memory": mem, "disk": disk})
+
+
+@app.route("/api/settings/filter_rules", methods=["GET"])
+def api_settings_filter_rules():
+    """Surface filter_rules.repair_rules (v0.5.0 slice 4.1); empty when absent."""
+    rules_path = Path(os.environ.get(
+        "IPRACTICOM_SWEEPER_RULES",
+        "/etc/ipracticom-sweeper/repair_policy.yaml",
+    ))
+    rules = []
+    note = None
+    enforced = True
+    if rules_path.is_file():
+        try:
+            import yaml as _yaml
+            raw = _yaml.safe_load(rules_path.read_text(encoding="utf-8")) or {}
+            section = raw.get("filter_rules") or raw.get("repair_rules") or {}
+            enforced = bool(section.get("enforced", True))
+            for r in section.get("rules", []) or []:
+                rules.append({
+                    "id": str(r.get("id") or r.get("pattern", "")),
+                    "name": r.get("name", ""),
+                    "pattern": r.get("pattern", ""),
+                    "action": r.get("action", "alert"),
+                    "enabled": bool(r.get("enabled", True)),
+                    "recoveryAction": r.get("recoveryAction", "none"),
+                    "recoveryScript": r.get("recoveryScript", ""),
+                    "enforced": bool(r.get("enforced", enforced)),
+                })
+        except Exception as e:
+            note = f"could not read {rules_path}: {e}"
+    else:
+        note = f"no rules file at {rules_path}"
+    return jsonify({"rules": rules, "enforced": enforced, "note": note})
 
 
 @app.route("/api/notify/test", methods=["POST"])
