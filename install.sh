@@ -23,7 +23,7 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/dizeldz20-ux/ipracticom-sweeper-private.git"
-BRANCH="${SWEEPER_BRANCH:-v0.6.3}"
+BRANCH="${SWEEPER_BRANCH:-v1.0.0}"
 INSTALL_DIR="${SWEEPER_INSTALL_DIR:-/opt/ipracticom-sweeper}"
 SERVICE_NAME="ipracticom-sweeper"
 STATE_DIR="/var/lib/${SERVICE_NAME}"

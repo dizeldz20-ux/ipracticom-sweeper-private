@@ -2,6 +2,44 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.0.0] — 2026-07-01 — Self-Resilience + Deep Checks + Forecast v2
+
+### Added
+- **Sprint 8 (Self-Resilience)**: 5 features, 37 tests
+  - External systemd watchdog (slice 8.1)
+  - State-dir disk monitor (slice 8.2)
+  - Telegram token health probe (slice 8.3)
+  - Audit log rotation with size+time cascade (slice 8.4)
+  - Self-monitor snapshot section (slice 8.5)
+- **Sprint 9 (FreeSWITCH Deep)**: 15 checks, 89 tests
+  - FS-26..FS-28: auth failures, call drops, NAT binding (slice 9.1–9.3)
+  - FS-29..FS-40: silence, OPTIONS, parse errors, dialplan, conf, vm, mod, ESL, max-procs, CDR pool, license, TPS (slice 9.4–9.15)
+- **Sprint 10 (Forecast v2)**: 5 primitives, 50 tests
+  - `detect_trend`: OLS-based trend classifier with R²
+  - `seasonal_decompose`: trend + seasonal + residual
+  - `detect_anomaly`: MAD outlier detector
+  - `confidence_bands`: p10/p50/p90 forecast intervals
+  - `ensemble_forecast`: weighted blend of multiple models
+  - `predict_at_horizon`: OLS extrapolation helper
+- **Sprint 15 (Repairs + Runbooks)**: 5 repairs + 2 runbooks, 49 tests
+  - `dns_cache_purge`, `fs_inode_warn_clear`, `rotate_audit_now`,
+    `telegram_token_revalidate`, `self_healthz_ping`
+  - `audit_pressure_runbook`, `self_health_recovery_runbook`
+  - Policy engine: `load_policy` now returns `__default__` for unlisted actions
+
+### Tests
+- **1121 → 1297** (+176 new tests, 0 failing across all sprints)
+
+### Changed
+- `pyproject.toml` `version` 0.6.3 → 1.0.0
+- `src/ipracticom_sweeper/__init__.py` `__version__` 0.6.1 → 1.0.0
+- `install.sh` default `SWEEPER_BRANCH` v0.6.3 → v1.0.0
+
+### Documentation
+- `docs/COVERAGE_MATRIX.md` — 63 features × status × test reference table
+
+---
+
 ## [0.6.2] — 2026-07-01 — SPA sidebar unification + tests
 
 ### Added

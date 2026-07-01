@@ -190,7 +190,7 @@ The public key goes here, NOT in the user's home (since the user has no home):
 
 ```bash
 cat > /etc/ssh/monitor_authorized/authorized_keys <<'EOF'
-from="10.0.0.5,127.0.0.1",command="/usr/local/bin/sweeper-remote-readonly.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,expiry-time="20261231T235959Z" ssh-ed25519 AAAA...CONTROLLER_PUBLIC_KEY... monitor@controller
+from="10.x.x.5,127.0.0.1",command="/usr/local/bin/sweeper-remote-readonly.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty,expiry-time="20261231T235959Z" ssh-ed25519 AAAA...CONTROLLER_PUBLIC_KEY... monitor@controller
 EOF
 
 chmod 644 /etc/ssh/monitor_authorized/authorized_keys
@@ -283,12 +283,12 @@ cat /etc/ipracticom-sweeper/ssh/id_monitor.pub
 ```yaml
 hosts:
   - name: target-vm-2
-    host: 10.0.0.6
+    host: 10.x.x.6
     ssh_user: monitor
     ssh_key: /etc/ipracticom-sweeper/ssh/id_monitor
     ssh_port: 22
   - name: target-vm-3
-    host: 10.0.0.7
+    host: 10.x.x.7
     ssh_user: monitor
     ssh_key: /etc/ipracticom-sweeper/ssh/id_monitor
     ssh_port: 22
@@ -347,8 +347,8 @@ sleep 60 && sudo iptables -D OUTPUT -m statistic --mode random --probability 0.5
 | 5 | Agent API listening | `curl -sS http://127.0.0.1:8810/healthz \| jq .ok` | `true` |
 | 6 | Auth gate works | `curl -sS http://127.0.0.1:8810/api/snapshot` | HTTP 401 |
 | 7 | Auth+token works | `curl -sS -H "Authorization: Bearer $AGENT_API_TOKEN" http://127.0.0.1:8810/api/snapshot \| jq '.defcon'` | integer 1-5 |
-| 8 | SSH to target works | `ssh -i /etc/ipracticom-sweeper/ssh/id_monitor -o BatchMode=yes monitor@10.0.0.6` | JSON output, exit 0 |
-| 9 | SSH restricted command works | `ssh ... monitor@10.0.0.6 "echo hi"` | command IGNORED, JSON returned |
+| 8 | SSH to target works | `ssh -i /etc/ipracticom-sweeper/ssh/id_monitor -o BatchMode=yes monitor@10.x.x.6` | JSON output, exit 0 |
+| 9 | SSH restricted command works | `ssh ... monitor@10.x.x.6 "echo hi"` | command IGNORED, JSON returned |
 | 10 | Fault detection works | inject § 4 fault, wait 1 cycle | DEFCON < 5 in next snapshot |
 
 **If any check fails → STOP. Do not improvise. Report exact step + exit code to operator.**

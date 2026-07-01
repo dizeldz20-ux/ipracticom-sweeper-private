@@ -89,7 +89,7 @@ Endpoints:
 ### Dashboard connecting to remote agent
 
 ```bash
-SWEEPER_REMOTE_URL=http://10.0.0.5:8787 \
+SWEEPER_REMOTE_URL=http://freeswitch.local:8787 \
 SWEEPER_REMOTE_TOKEN=your-secret-token \
     python3 -m ipracticom_sweeper.dashboard --port 8790
 ```
@@ -239,6 +239,22 @@ The v6 surface ships alongside the legacy dashboard at `/v6/*` — both run on t
 All v6 write routes produce a `RepairProposal` (never mutate state without operator approval). Remote mode refuses all writes (400).
 
 ## License
+
+## FAQ
+
+**Q: Does the sweeper call an LLM in the hot path?**
+No. All monitoring, diagnosis, and repair is deterministic and rules-based.
+
+**Q: How does it handle FreeSWITCH failures?**
+It runs 40 checks (FS-01..FS-40) covering process, SIP, RTP, CDR, license, etc.
+
+**Q: What if a repair breaks something?**
+Every repair takes a pre-action snapshot. Repairs are classified SAFE / GUARDED /
+DANGEROUS; the policy file controls which run automatically.
+
+**Q: Can I run it without root?**
+The watchdog and some repairs (drop_caches, service_restart) need root. The
+monitoring layer works as an unprivileged user.
 
 Internal — iPracticom 2026.
 
