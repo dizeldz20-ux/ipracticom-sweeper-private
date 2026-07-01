@@ -2,6 +2,45 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] — 2026-07-01 — v6 dashboard rewrite (Sprints 5–7)
+
+### Added — v6 dashboard surface (14 new routes, +3004 LOC, +38 tests)
+- **Sprint 5 — Theme + layout (`0db2f9a`):** dark slate CSS theme, sidebar layout (`_v6_sidebar.html`), stats bar (`_v6_stats_bar.html`), `_v6_layout.html` shell, `v6_index.html`. Backwards-compatible with legacy dashboard.
+- **Sprint 6 — Machine list + maintenance (`cc6f299`):** `/v6/machines` (table view of all hosts), `/v6/machines/<host>/action` (gated execute), `/v6/machines/<host>/maintenance` + `/maintenance/off` (snooze window for noise reduction).
+- **Sprint 7 — Live alerts + log stream + heatmap/uptime (`482fc48`):**
+  - `/v6/alerts` + `/v6/alerts/page` — JSON list + HTML wrapper, polled client-side every 5s. Category tabs (network / performance / security / system).
+  - `/v6/alerts/<id>/snooze` — durations 15m / 1h / 24h, rejects bad input with 400. Remote mode refuses with 400.
+  - `/v6/alerts/<id>/resolve` — same discipline as snooze.
+  - `/v6/logs` + `/v6/logs/page` — tails latest 200 lines from `freeswitch.log` → `freeswitch.log.1`, falls back to sweeper audit log. Read-only; pause/play/clear/auto-scroll. POST/PUT/DELETE all rejected.
+  - `/v6/metrics/events_heatmap` — 7×24 bucket grid from monitor audit log.
+  - `/v6/metrics/uptime_30d` — 30 `{date, ratio}` entries (no-data = 1.0).
+  - `/v6/metrics/page` — both above rendered as inline SVG (zero JS frameworks, zero Recharts).
+
+### Safety invariants (held across all v6 writes)
+- **Approve-before-mutate:** every v6 write surface (`alerts/snooze`, `alerts/resolve`, `machines/action`, `machines/maintenance`) writes a `RepairProposal`. None of them mutates host state without an explicit operator approval cycle.
+- **Remote mode refuses:** the `RemediationClient` remote sentinel rejected at all v6 mutating routes — verified by tests.
+- **Read-only enforcement:** all v6 read endpoints reject non-GET methods with 405.
+
+### Tests
+- **+38 v6 tests** on top of v0.5.0 baseline:
+  - `tests/test_v6_theme.py` — 7 (CSS class wiring)
+  - `tests/test_v6_sidebar.py` — 9 (template render + active-link)
+  - `tests/test_v6_stats_bar.py` — 10 (badge count, JSON shape)
+  - `tests/test_v6_machines.py` — 8 (table render, empty hosts handling)
+  - `tests/test_v6_machine_actions.py` — 18 (gating: needs_approval, remote refusal, repair policy stub)
+  - `tests/test_v6_alerts.py` — 16 (snooze/resolve happy + sad paths, remote refusal, valid durations)
+  - `tests/test_v6_logs.py` — 13 (read-only verification, fallback when FS log missing)
+  - `tests/test_v6_metrics.py` — 9 (heatmap bucket math, uptime no-data default = 1.0)
+- Legacy dashboard smoke (`tests/test_sweeper.py` + `test_dashboard.py`) — 64/64 pass in 20.9s, **zero regressions**.
+
+### Operator notes
+- v6 routes live under `/v6/*`. Legacy `/dashboard`, `/inspector`, `/catalogue`, `/chat`, `/machines` all keep working — no URL was renamed or removed.
+- All v6 templates are inline-SVG / vanilla JS — no new frontend dep was added.
+- v6 routes inherit the same auth + remote-mode + repair-policy gating as the legacy dashboard.
+
+### Migration
+- Update your reverse proxy / dashboard nav if you want v6 as the default. Otherwise nothing changes — both UIs coexist on the same Flask process.
+
 ## [0.5.0] — 2026-06-30 — FreeSWITCH coverage + Chat assistant
 
 ### Added
