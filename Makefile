@@ -10,8 +10,8 @@ PKG := ipracticom_sweeper
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-install:  ## Install package in editable mode
-	$(PIP) install -e .
+install:  ## Install package in editable mode (PEP-668 safe)
+	$(PIP) install -e . --break-system-packages
 
 quickstart:  ## Run sweeper once (no systemd, no install)
 	bash quickstart.sh
@@ -19,8 +19,11 @@ quickstart:  ## Run sweeper once (no systemd, no install)
 test:  ## Run full test suite
 	$(PYTHON) -m pytest -v
 
+test-v6:  ## Run only v6 dashboard tests (fast smoke, ~16s)
+	$(PYTHON) -m pytest -q tests/test_v6_*.py
+
 test-fast:  ## Run tests, stop on first failure
-	$(PYTHON) -m pytest -x -q
+	$(PYTHON) -m pytest -x -q -k "not integration"
 
 run:  ## Run a single sweep via CLI
 	$(PYTHON) -m $(PKG).sweeper

@@ -1,0 +1,34 @@
+[Unit]
+Description=iPracticom AWS Linux Sweeper - agent HTTP API (dashboard + v6)
+Documentation=https://github.com/dizeldz20-ux/ipracticom-voice-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Long-lived Flask service. Binds 127.0.0.1 by default (safe); set
+# SWEEPER_API_HOST=0.0.0.0 in /etc/ipracticom-sweeper/agent-api.env to expose.
+ExecStart=/usr/bin/python3 -m ipracticom_sweeper.dashboard --port 8787
+WorkingDirectory=/var/lib/ipracticom-sweeper
+User=root
+Group=root
+# Same hardening as the sweeper service
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=false
+# Dashboard reads audit/connectors/metrics.db — needs RW to /var/lib/ipracticom-sweeper
+ReadWritePaths=/var/lib/ipracticom-sweeper /var/log/ipracticom-sweeper
+# Memory + CPU caps (dashboard is light; tight here to keep one bad host from monopolising RAM)
+MemoryMax=512M
+CPUQuota=80%
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ipracticom-sweeper-api
+# Treat non-zero as transient; dashboard import errors shouldn't fail the unit
+SuccessExitStatus=0 1 2 3
+
+[Install]
+WantedBy=multi-user.target

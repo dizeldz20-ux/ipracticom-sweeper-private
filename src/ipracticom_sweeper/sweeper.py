@@ -14,6 +14,8 @@ import logging
 import sys
 from pathlib import Path
 
+from ipracticom_sweeper import __version__
+
 import structlog
 
 from ipracticom_sweeper.config import load_rules
@@ -113,6 +115,11 @@ def main() -> int:
         "--dry-run",
         action="store_true",
         help="Don't actually execute repairs — log intent only",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="ipracticom-sweeper " + __version__,
     )
     args = parser.parse_args()
 
