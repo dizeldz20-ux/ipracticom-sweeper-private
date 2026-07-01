@@ -2,6 +2,22 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] — 2026-07-01 — SPA sidebar unification + tests
+
+### Added
+- **SPA sidebar unification** (commits `ff007dc`, `dbd6ebf`, `cf86eb3`): the legacy top-nav is now embedded into both SPA variants (`/spa/a` and `/spa/b`) so every navigation affordance lives in a single sidebar — 9 items (Dashboard, Live State, Modules, Problems, Repairs, Predictions, Evidence, Security, Audit) — instead of being split between a top-nav bar and a sidebar. Same `/api/snapshot` data, fewer competing UI surfaces.
+- **Dashboard A/B screenshots** (`docs/dashboard-variant-a.png`, `docs/dashboard-variant-b.png`) — captured from the live `/api/snapshot` with real data for side-by-side peer review.
+
+### Fixed
+- `tests/test_dashboard.py`, `tests/test_v6_machines.py`, `tests/test_v6_sidebar.py` — caught and fixed latent failures that would have shipped red with the new SPA sidebar (sidebar items not matching the new shell, machine detail missing the actions panel, sidebar height regression).
+
+### Tests
+- **1083 → 1121** (+38 new tests, 0 failing). New SPA sidebar surface covered end-to-end.
+
+### Changed
+- `pyproject.toml` `version` 0.6.1 → 0.6.2
+- `install.sh` / `bootstrap.sh` default `SWEEPER_BRANCH` v0.6.1 → v0.6.2
+
 ## [0.6.1] — 2026-07-01 — one-liner installer + agent_api + SPA A/B
 
 ### Added

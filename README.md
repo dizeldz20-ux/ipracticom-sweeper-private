@@ -3,8 +3,8 @@
 > Server health monitor and safe auto-repair agent for AWS Linux fleets.
 > Built for [iPracticom](https://github.com/dizeldz20-ux) production operations.
 
-[![version](https://img.shields.io/badge/version-0.6.1-blue)]()
-[![tests](https://img.shields.io/badge/tests-1083%20passing-brightgreen)]()
+[![version](https://img.shields.io/badge/version-0.6.2-blue)]()
+[![tests](https://img.shields.io/badge/tests-1121%20passing-brightgreen)]()
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![license](https://img.shields.io/badge/license-internal-lightgrey)]()
 
@@ -165,7 +165,7 @@ Snapshots are stored in `/var/lib/ipracticom-sweeper/snapshots/<uuid>.json`. Rol
 python3 -m pytest tests/ -v
 ```
 
-Test count: **1083+ tests** across 23 monitor modules + 25 FreeSWITCH checks + 14 v6 dashboard routes + 11 SPA variant tests. Run with `make test-fast` (targeted) or `pytest -q tests/test_v6_*` for the v6 surface, `pytest -q tests/test_spa_variants.py` for the SPA comparison.
+Test count: **1121+ tests** across 23 monitor modules + 25 FreeSWITCH checks + 14 v6 dashboard routes + 11 SPA variant tests + 9 sidebar unification tests + test fixes (test_dashboard/v6_machines/v6_sidebar). Run with `make test-fast` (targeted) or `pytest -q tests/test_v6_*` for the v6 surface, `pytest -q tests/test_spa_variants.py` for the SPA comparison.
 
 ## Architecture diagrams
 
