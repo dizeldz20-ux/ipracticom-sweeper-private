@@ -223,10 +223,26 @@ cmd_update() {
     # --- 8. Verify ---
     log "Step 8/8: Verifying..."
     sleep 2
+    local api_ok=0
+    # 8a. API root or /healthz
     if curl -sf http://127.0.0.1:8787/healthz >/dev/null 2>&1; then
         ok "agent_api /healthz returns 200"
+        api_ok=1
+    elif curl -sf http://127.0.0.1:8787/ >/dev/null 2>&1; then
+        ok "agent_api / (root) returns 200"
+        api_ok=1
     else
-        warn "agent_api /healthz not responding — check 'systemctl status ipracticom-sweeper.service'"
+        warn "agent_api not responding — check 'systemctl status ipracticom-sweeper-api.service'"
+    fi
+    # 8b. v6 dashboard smoke — at least one v6 route should serve (200 or 302)
+    if [[ "$api_ok" == "1" ]]; then
+        if curl -sf -o /dev/null --max-time 5 http://127.0.0.1:8787/v6/machines 2>/dev/null \
+            || curl -sf -o /dev/null --max-time 5 http://127.0.0.1:8787/v6/alerts 2>/dev/null \
+            || curl -s  -o /dev/null --max-time 5 -w '%{http_code}' http://127.0.0.1:8787/v6/index 2>/dev/null | grep -qE '^(2|3)'; then
+            ok "v6 dashboard surface responding"
+        else
+            warn "v6 routes not detected (this is fatal if upgrading TO v0.6.0+)"
+        fi
     fi
     local new_version
     new_version=$(grep -E '^version\s*=' "$PROJECT_ROOT/pyproject.toml" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')

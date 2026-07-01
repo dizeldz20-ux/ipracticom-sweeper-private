@@ -3,7 +3,8 @@
 > Server health monitor and safe auto-repair agent for AWS Linux fleets.
 > Built for [iPracticom](https://github.com/dizeldz20-ux) production operations.
 
-[![tests](https://img.shields.io/badge/tests-162%20passing-brightgreen)]()
+[![version](https://img.shields.io/badge/version-0.6.0-blue)]()
+[![tests](https://img.shields.io/badge/tests-996%2B%20passing-brightgreen)]()
 [![python](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![license](https://img.shields.io/badge/license-internal-lightgrey)]()
 
@@ -11,7 +12,7 @@
 
 The sweeper runs every 5 minutes on each host (via systemd timer) and:
 
-1. **Monitors** 9 subsystems (CPU, memory, disk, network, services, logs, processes, security, AWS metadata)
+1. **Monitors** 23 subsystems: CPU, memory, disk, network, services, logs, processes, security, AWS metadata, FreeSWITCH (FS-01..25 across 4 tiers), SSL certs, HTTP endpoints, SMART disk health, kernel errors (Oops/MCE/segfault), iostat, process tracker, fd exhaustion, AIDE file integrity, security baseline (SSH/SUID/ports), uptime, health
 2. **Diagnoses** findings against threshold rules and assigns a DEFCON level (5=green, 1=black)
 3. **Repairs** safe issues automatically (drop_caches, journald vacuum)
 4. **Notifies** Slack and/or Telegram when DEFCON ≤ 4 or when a security issue is detected
@@ -24,13 +25,14 @@ All monitoring, diagnosis and repair is **deterministic, rules-based, and audit-
 ```
 ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
 │  Monitor     │──▶│   Diagnose   │──▶│   Repair     │
-│  9 modules   │   │   DEFCON     │   │  safe only   │
+│ 23 modules   │   │   DEFCON     │   │  safe only   │
 └──────────────┘   └──────────────┘   └──────────────┘
        │                  │                  │
        ▼                  ▼                  ▼
-   /proc/*           Rules + RepairSafety   /proc/sys/vm
-   journalctl        Worst-wins defcon      journalctl --vacuum
-   systemctl         safe_repairs list     systemctl restart
+   /proc/* + sofia    Rules + RepairSafety   /proc/sys/vm
+   journalctl          Worst-wins defcon     journalctl --vacuum
+   systemctl           safe_repairs list     systemctl restart
+   freeswitch CLI      needs_human flags     fs_cli recovery
 ```
 
 Every repair is preceded by a snapshot (`/var/lib/ipracticom-sweeper/snapshots/<uuid>.json`) for rollback.
@@ -163,13 +165,13 @@ Snapshots are stored in `/var/lib/ipracticom-sweeper/snapshots/<uuid>.json`. Rol
 python3 -m pytest tests/ -v
 ```
 
-Test count: **162 tests** across 9 modules.
+Test count: **1034+ tests** across 23 monitor modules + 25 FreeSWITCH checks + 14 v6 dashboard routes. Run with `make test-fast` (targeted) or `pytest -q tests/test_v6_*` for the new dashboard surface.
 
 ## Architecture diagrams
 
 The pipeline runs 5 steps:
 
-1. **Monitor** → 9 modules collect from `/proc`, journalctl, systemctl, boto3
+1. **Monitor** → 23 modules collect from `/proc`, journalctl, systemctl, boto3, `fs_cli`, `ntptime`, SMART, AIDE, optional Prometheus exporters
 2. **Adapt** → normalize field names (e.g. `mount` → `mountpoint`)
 3. **Diagnose** → 5 diagnosers (cpu/memory/disk/services/security) → DEFCON + safe_repairs + needs_human
 4. **Repair** → iterate over safe_repairs, snapshot → execute → audit
@@ -197,10 +199,30 @@ src/ipracticom_sweeper/
 ├── dashboard.py        # Flask UI (local + remote)
 ├── agent_api.py        # Standalone HTTP API
 └── agent_client.py     # Typed HTTP client
-tests/                  # 162 tests
-systemd/                # service + timer units
-scripts/                # install-systemd.sh
+tests/                  # 1034+ tests across all surfaces
+systemd/                # service + timer + agent_api units
+scripts/                # install-systemd.sh, update.sh, install_telegram_bot.sh
+install.sh              # one-liner installer (curl | bash)
 ```
+
+## v6 Dashboard (added in v0.6.0)
+
+The v6 surface ships alongside the legacy dashboard at `/v6/*` — both run on the same Flask process, no migration needed.
+
+| Route | Purpose | Read/Write |
+|---|---|---|
+| `/v6/machines` | Host list + per-host status | read |
+| `/v6/machines/<host>/action` | Trigger safe action (approve-before-mutate) | write (gated) |
+| `/v6/machines/<host>/maintenance` (+ `/off`) | Snooze noise window | write (gated) |
+| `/v6/alerts` + `/v6/alerts/page` | Live alert list (5s polling, category tabs) | read |
+| `/v6/alerts/<id>/snooze` | 15m / 1h / 24h | write (gated) |
+| `/v6/alerts/<id>/resolve` | Mark resolved | write (gated) |
+| `/v6/logs` + `/v6/logs/page` | FS log tail (read-only), pause/play/clear | read |
+| `/v6/metrics/events_heatmap` | 7×24 bucket grid | read |
+| `/v6/metrics/uptime_30d` | 30 days ratio, no-data = 1.0 | read |
+| `/v6/metrics/page` | Inline SVG render of both | read |
+
+All v6 write routes produce a `RepairProposal` (never mutate state without operator approval). Remote mode refuses all writes (400).
 
 ## License
 
