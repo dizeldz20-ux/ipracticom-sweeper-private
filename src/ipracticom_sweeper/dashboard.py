@@ -38,6 +38,7 @@ from typing import Any
 from flask import Flask, abort, jsonify, render_template, request
 
 from ipracticom_sweeper.agent_client import AgentClient, AgentError
+from ipracticom_sweeper.spa_context import shape_spa_context
 from ipracticom_sweeper.config import (
     Connector,
     get_server_id,
@@ -596,6 +597,29 @@ def _redirect_to_dashboard():
 def api_snapshot():
     """Same as /run — alias for consistency with agent API."""
     return run_view()
+
+
+# --- SPA dashboard variants (A / B chooser) ---------------------------------
+
+
+@app.route("/spa")
+def spa_chooser():
+    """Landing page to pick between the two dashboard SPA variants."""
+    return render_template("spa_chooser.html")
+
+
+@app.route("/spa/a")
+def spa_variant_a():
+    """Variant A — faithful Google AI Studio port, rendered with real data."""
+    ctx = shape_spa_context(_fetch_snapshot())
+    return render_template("spa_variant_a.html", ctx=ctx)
+
+
+@app.route("/spa/b")
+def spa_variant_b():
+    """Variant B — impeccable-polished dashboard, rendered with real data."""
+    ctx = shape_spa_context(_fetch_snapshot())
+    return render_template("spa_variant_b.html", ctx=ctx)
 
 
 @app.route("/api/notify/test", methods=["POST"])

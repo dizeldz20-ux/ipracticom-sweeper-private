@@ -1176,6 +1176,7 @@ main.container {
   .chat-sessions { position: static; }
   .chat-msg { max-width: 95%; }
 }
+/* --- end Chat shell ------------------------------------------------- */
 /* =====================================================================
    v0.6.0 — Slate-950 design system (additive — slice 5.1)
    New palette/radius tokens ready for gradual adoption by slices 5.2/5.3.
