@@ -177,3 +177,51 @@ def test_variant_b_respects_reduced_motion(client, snapshot):
         resp = client.get("/spa/b")
     body = resp.get_data(as_text=True)
     assert "prefers-reduced-motion" in body
+
+
+# --- Top nav (links to all legacy routes from the SPA variants) -----------
+# Matches the legacy top-nav from templates/base.html exactly so the operator
+# and the peer can reach any surface (history, approvals, settings, fleet,
+# inspector, catalogue, chat) without going through the sidebar.
+
+NAV_LINKS = [
+    ("/", "לוח בקרה"),
+    ("/history", "היסטוריה"),
+    ("/approvals", "אישורים"),
+    ("/settings", "הגדרות"),
+    ("/settings/connectors", "מחברים"),
+    ("/fleet", "צי"),
+    ("/inspector", "מפקח בדיקות"),
+    ("/catalogue", "קטלוג"),
+    ("/chat", "צ'אט"),
+]
+
+
+@pytest.mark.parametrize("href,label", NAV_LINKS)
+def test_variant_a_includes_top_nav_link(client, snapshot, href, label):
+    with patch("ipracticom_sweeper.dashboard._fetch_snapshot", return_value=snapshot):
+        resp = client.get("/spa/a")
+    body = resp.get_data(as_text=True)
+    assert f'href="{href}"' in body, f"variant A missing nav link to {href}"
+    assert label in body, f"variant A missing nav label {label}"
+
+
+@pytest.mark.parametrize("href,label", NAV_LINKS)
+def test_variant_b_includes_top_nav_link(client, snapshot, href, label):
+    with patch("ipracticom_sweeper.dashboard._fetch_snapshot", return_value=snapshot):
+        resp = client.get("/spa/b")
+    body = resp.get_data(as_text=True)
+    assert f'href="{href}"' in body, f"variant B missing nav link to {href}"
+    assert label in body, f"variant B missing nav label {label}"
+
+
+def test_top_nav_routes_all_reachable(client, snapshot):
+    """Every nav link must point to a route the dashboard actually serves."""
+    with patch("ipracticom_sweeper.dashboard._fetch_snapshot", return_value=snapshot):
+        # /chat requires a registered chat blueprint — exercised by registering
+        # in setUp; if it's not registered the test for that link would 404.
+        for href, _ in NAV_LINKS:
+            resp = client.get(href)
+            assert resp.status_code in (200, 302), (
+                f"nav link {href} returned {resp.status_code}"
+            )
