@@ -41,6 +41,29 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 ### Migration
 - Update your reverse proxy / dashboard nav if you want v6 as the default. Otherwise nothing changes — both UIs coexist on the same Flask process.
 
+
+## [0.6.1] — 2026-07-01 — One-liner installer + agent_api service
+
+### Added
+- **`install.sh`** at repo root — single-file installer callable as `curl ... | sudo bash`. Detects apt vs dnf, clones to `/opt/ipracticom-sweeper`, installs OS + Python deps, lays out `/var/lib/ipracticom-sweeper/{audit,snapshots,cache,fleet,pending_repairs}`, seeds `/etc/ipracticom-sweeper/repair_policy.yaml` from `etc/`, hands off to `scripts/install-systemd.sh`, verifies `http://127.0.0.1:8787/`. Idempotent. Supports `--uninstall` and `SWEEPER_BRANCH=master`. Closes the gap where every fresh install previously required 4+ manual steps.
+- **`systemd/ipracticom-sweeper-api.service`** — new long-running unit binds `python3 -m ipracticom_sweeper.dashboard --port 8787` so `scripts/update.sh --verify` (which hits `/healthz`) actually has a process to talk to. Before this, fresh installs passed `--check` (timer active) but failed `--verify` with `warn: agent_api /healthz not responding`.
+
+### Changed
+- **`scripts/install-systemd.sh`** rewritten: now installs ALL three units (sweeper.service, sweeper.timer, sweeper-api.service); seeds `repair_policy.yaml` from `etc/` (not the non-existent `rules/`); adds `--purge` to wipe `/var/lib/ipracticom-sweeper/` for clean re-installs; prints a verification banner.
+- **`scripts/update.sh`** Step 8 now probes one `/v6/*` route so a v6 install that breaks the rewrite is caught at upgrade time (was: only `/healthz` check).
+- **`sweeper.py`** `--version` flag (prints `ipracticom-sweeper 0.6.1`).
+- **`Makefile`** `install` target adds `--break-system-packages` (PEP-668 safe on Debian 12 / RHEL 9). New `make test-v6` smoke target.
+
+### Docs
+- **`README.md`** corrected stale numbers: test count 162 → 1034+, monitor modules 9 → 23, added v6 dashboard table, added `version` badge.
+
+### Migration
+None for existing installs. New installs gain the API service automatically. Existing installs can manually enable the API with:
+```bash
+sudo cp systemd/ipracticom-sweeper-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ipracticom-sweeper-api.service
+```
 ## [0.5.0] — 2026-06-30 — FreeSWITCH coverage + Chat assistant
 
 ### Added
