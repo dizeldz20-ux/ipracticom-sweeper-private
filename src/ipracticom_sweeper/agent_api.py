@@ -26,9 +26,11 @@ from this service instead of running the pipeline locally.
 from __future__ import annotations
 
 import argparse
+import collections  # for rate-limit deque
 import hmac
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from functools import wraps
@@ -125,6 +127,7 @@ def create_app() -> Flask:
     app = Flask(__name__)
     token = os.environ.get("AGENT_API_TOKEN", "")
 
+    # --- Auth (bearer token) ----------------------------------------------
     def require_auth(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
@@ -137,9 +140,103 @@ def create_app() -> Flask:
             return fn(*args, **kwargs)
         return wrapper
 
-    # --- Healthz -----------------------------------------------------------
+    # --- Rate limiting (built-in, no flask-limiter dependency) -----------
+    # Per-IP token-bucket: configurable via env (default 100/min/IP for /api/*,
+    # 600/min for /healthz). Keeps a small in-memory dict of {ip: [timestamps]}.
+    _RL_API_DEFAULT = int(os.environ.get("AGENT_API_RATELIMIT_API", "100"))
+    _RL_HEALTHZ_DEFAULT = int(os.environ.get("AGENT_API_RATELIMIT_HEALTHZ", "600"))
+    _RL_ENABLED = os.environ.get("AGENT_API_RATELIMIT", "1") == "1"
+    _rl_buckets: dict[str, collections.deque[float]] = {}
+    _RL_LOCKS: dict[str, threading.Lock] = {}
+
+    def _rl_lock_for(key: str) -> threading.Lock:
+        # Lazy-init one lock per key; protects bucket mutation under concurrency.
+        if key not in _RL_LOCKS:
+            _RL_LOCKS[key] = threading.Lock()
+        return _RL_LOCKS[key]
+
+    def _check_rate_limit(scope: str, limit_per_min: int) -> tuple[bool, int]:
+        """Return (allowed, remaining). Sliding window of 60 seconds."""
+        if not _RL_ENABLED:
+            return True, limit_per_min
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown")
+        # Take first IP if XFF is a chain
+        ip = ip.split(",")[0].strip()
+        key = f"{scope}:{ip}"
+        lock = _rl_lock_for(key)
+        now = time.monotonic()
+        cutoff = now - 60.0
+        with lock:
+            bucket = _rl_buckets.setdefault(key, collections.deque())
+            # Drop expired entries
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= limit_per_min:
+                return False, 0
+            bucket.append(now)
+            return True, limit_per_min - len(bucket)
+
+    def _rate_limit(scope: str, limit_per_min: int):
+        """Decorator factory; attaches 429 + Retry-After on overage."""
+        def deco(fn):
+            @wraps(fn)
+            def wrapper(*args, **kwargs):
+                allowed, remaining = _check_rate_limit(scope, limit_per_min)
+                if not allowed:
+                    resp = jsonify({"error": "rate_limited", "scope": scope})
+                    resp.status_code = 429
+                    resp.headers["Retry-After"] = "60"
+                    return resp
+                resp = fn(*args, **kwargs)
+                # Attach informational header on success
+                try:
+                    if hasattr(resp, "headers"):
+                        resp.headers["X-RateLimit-Remaining"] = str(remaining)
+                except Exception:
+                    pass
+                return resp
+            return wrapper
+        return deco
+
+    # --- CORS (localhost-only by default) --------------------------------
+    # Permits the dashboard to call the API from a different local port
+    # (e.g. dashboard on :5000 calling agent API on :8787). No wildcard
+    # origin is ever set — operators must opt in to remote origins via
+    # AGENT_API_CORS_ORIGINS=comma,separated,list.
+    _CORS_ALLOWED = (
+        {"http://localhost", "http://localhost:5000", "http://127.0.0.1",
+         "http://127.0.0.1:5000"}
+        | {
+            o.strip()
+            for o in os.environ.get("AGENT_API_CORS_ORIGINS", "").split(",")
+            if o.strip()
+        }
+    )
+
+    @app.after_request
+    def _cors_headers(resp):
+        origin = request.headers.get("Origin")
+        if origin and origin in _CORS_ALLOWED:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Vary"] = "Origin"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = (
+                "Authorization, Content-Type"
+            )
+            resp.headers["Access-Control-Max-Age"] = "600"
+        return resp
+
+    @app.route("/<path:_any>", methods=["OPTIONS"])
+    def _cors_preflight(_any):
+        # Tiny preflight handler — 204 with CORS headers attached by
+        # the after_request hook above. No auth, no rate-limit (CORS
+        # preflight is cheap and Chrome retries it constantly).
+        return ("", 204)
+
+    # --- Healthz (highest rate limit, no auth required) ------------------
 
     @app.route("/healthz")
+    @_rate_limit("healthz", _RL_HEALTHZ_DEFAULT)
     def healthz():
         return jsonify({
             "ok": True,
