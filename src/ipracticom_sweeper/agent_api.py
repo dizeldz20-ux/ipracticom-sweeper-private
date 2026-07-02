@@ -98,6 +98,29 @@ def _local_status(heartbeat: dict[str, Any] | None) -> str:
     return "ok"
 
 
+def _redact_secrets(d: dict[str, Any] | None) -> dict[str, Any]:
+    """Redact values for keys that look like they carry credentials/secrets.
+
+    Recursively walks dicts and lists. Returns a new dict — does not mutate.
+    """
+    SECRET_KEYS = frozenset({
+        "password", "passwd", "pwd", "secret", "token", "api_key",
+        "apikey", "access_key", "secret_key", "private_key", "auth",
+        "authorization", "credential", "credentials", "ssh_key", "ssl_key",
+    })
+    REDACTED = "***REDACTED***"
+
+    def scrub(v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: ("***REDACTED***" if k.lower() in SECRET_KEYS else scrub(val))
+                    for k, val in v.items()}
+        if isinstance(v, list):
+            return [scrub(x) for x in v]
+        return v
+
+    return scrub(d or {})
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     token = os.environ.get("AGENT_API_TOKEN", "")
@@ -341,7 +364,7 @@ def create_app() -> Flask:
 
     # --- Run trigger -------------------------------------------------------
 
-    @app.route("/api/run", methods=["POST", "GET"])
+    @app.route("/api/run", methods=["POST"])
     @require_auth
     def api_run():
         """Trigger a fresh sweep, cache the result, return it."""
@@ -709,7 +732,7 @@ def create_app() -> Flask:
             "kind": "repair_executed",
             "proposal_id": pid,
             "action": proposal.action,
-            "kwargs": proposal.kwargs,
+            "kwargs": _redact_secrets(proposal.kwargs),
             "proposed_command": proposal.proposed_command,
             "status": new_status,
             "result": result_dict,
@@ -723,8 +746,17 @@ def create_app() -> Flask:
     @app.route("/api/approvals/<pid>/reject", methods=["POST"])
     @require_auth
     def api_approvals_reject(pid):
-        """Reject a pending proposal: archive as rejected (no execution)."""
+        """Reject a pending proposal: archive as rejected (no execution).
+
+        Requires a non-empty `reason` field in the JSON body so we have
+        an audit trail explaining why the operator rejected the repair.
+        """
         from ipracticom_sweeper.repair import pending as pending_mod
+
+        payload = request.get_json(silent=True) or {}
+        reason = (payload.get("reason") or "").strip()
+        if not reason:
+            return jsonify({"error": "reason_required"}), 400
 
         proposal = pending_mod.get_proposal(pid)
         if proposal is None:
@@ -741,8 +773,8 @@ def create_app() -> Flask:
             "kind": "repair_rejected",
             "proposal_id": pid,
             "action": proposal.action,
-            "kwargs": proposal.kwargs,
-            "reason": proposal.reason,
+            "kwargs": _redact_secrets(proposal.kwargs),
+            "reason": reason,
         })
         return jsonify({"ok": True, "status": "rejected"})
 
@@ -981,11 +1013,31 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--allow-open",
+        action="store_true",
+        help="Explicitly allow OPEN mode (no token) on a non-loopback host. "
+             "By default, OPEN mode + non-loopback is refused.",
+    )
     args = parser.parse_args()
+
+    # Fail-closed: if no token AND binding to a non-loopback address, refuse
+    # to start unless --allow-open is passed. Prevents accidentally exposing
+    # an unauthenticated API to the network.
+    token_present = bool(os.environ.get("AGENT_API_TOKEN", ""))
+    is_loopback = args.host in ("127.0.0.1", "::1", "localhost", "")
+    if not token_present and not is_loopback and not args.allow_open:
+        print(
+            f"[agent_api] REFUSING TO START: AGENT_API_TOKEN is unset but "
+            f"--host={args.host} is not loopback. This would expose the API "
+            f"unauthenticated. Set AGENT_API_TOKEN or pass --allow-open.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     app = create_app()
     print(f"[agent_api] Starting on {args.host}:{args.port}")
-    print(f"[agent_api] Auth: {'token' if os.environ.get('AGENT_API_TOKEN') else 'OPEN (localhost only)'}")
+    print(f"[agent_api] Auth: {'token' if token_present else 'OPEN'}")
 
     # Start the fleet collector loop (no-op if there are no enabled connectors).
     # Imported lazily to keep cold-start fast for agents that don't use fleet mode.

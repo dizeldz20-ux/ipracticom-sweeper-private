@@ -22,8 +22,8 @@ def eng() -> RunbookEngine:
     return RunbookEngine(dry_run=True)
 
 
-def _trig_args(name: str, defcon: int = 3, cooldown: float = 300) -> dict:
-    return dict(runbook_name=name, defcon=defcon, trigger_defcon=3, cooldown_seconds=cooldown)
+def _trig_args(name: str, defcon: int = 3, trigger_defcon: int = 3, cooldown: float = 300) -> dict:
+    return dict(runbook_name=name, defcon=defcon, trigger_defcon=trigger_defcon, cooldown_seconds=cooldown)
 
 
 # ============= should_trigger ==============================================

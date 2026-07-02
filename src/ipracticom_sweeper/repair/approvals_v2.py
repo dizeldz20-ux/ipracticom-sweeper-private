@@ -35,13 +35,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-# High-risk actions that require two-operator quorum
+# High-risk actions that require two-operator quorum.
+# Names must match those registered via @register() in repair/actions.py
+# and repair/actions_extra.py (no `repair_` prefix).
 HIGH_RISK_ACTIONS = frozenset({
-    "repair_fs_reload_xml",
-    "repair_drop_caches",
-    "repair_pg_vacuum",
-    "repair_redis_flush",
-    "repair_service_restart",
+    "reload_freeswitch_config",
+    "drop_caches",
+    "pg_vacuum",
+    "service_restart",
 })
 
 

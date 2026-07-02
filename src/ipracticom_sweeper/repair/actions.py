@@ -17,6 +17,7 @@ Available repair actions:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -30,6 +31,13 @@ from typing import Any, Callable
 import structlog
 
 logger = structlog.get_logger()
+
+
+# Validation regexes for inputs that flow into subprocess calls.
+# systemd unit names: [A-Za-z0-9_.@-]+ (per systemd.unit(5))
+_VALID_SYSTEMD_UNIT = re.compile(r"^[A-Za-z0-9_.@-]{1,256}$")
+# SQL identifier (PostgreSQL): letters/underscore start, then letters/digits/underscore/dot
+_VALID_SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,62}$")
 
 
 # --- Snapshot store ----------------------------------------------------------
@@ -238,7 +246,19 @@ def repair_service_restart(unit: str) -> RepairResult:
     """Restart a systemd service. GUARDED — service goes down briefly.
 
     Only valid for services classified as critical in the rules.
+    `unit` is validated against the systemd unit-name charset before
+    being passed to `systemctl restart`, to prevent command injection.
     """
+    if not _VALID_SYSTEMD_UNIT.match(unit or ""):
+        return RepairResult(
+            action="service_restart",
+            target=unit or "",
+            success=False,
+            snapshot_id=None,
+            message=f"invalid systemd unit name: {unit!r}",
+            duration_ms=0,
+            error="invalid_unit_name",
+        )
     snap = _new_snapshot(
         action="service_restart",
         target=unit,

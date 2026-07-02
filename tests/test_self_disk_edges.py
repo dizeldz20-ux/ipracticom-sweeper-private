@@ -46,7 +46,7 @@ def test_find_state_dir_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 def test_disk_usage_pct_returns_float(tmp_path: Path) -> None:
     pct = _disk_usage_pct(str(tmp_path))
-    assert isinstance(pct, (int, float)) or pct is None
+    assert isinstance(pct, (int, float)), f"expected numeric, got {pct!r}"
 
 
 def test_disk_usage_pct_handles_invalid_path() -> None:
@@ -59,7 +59,7 @@ def test_disk_usage_pct_handles_invalid_path() -> None:
 
 def test_inode_usage_pct_returns_value(tmp_path: Path) -> None:
     pct = _inode_usage_pct(str(tmp_path))
-    assert isinstance(pct, (int, float)) or pct is None
+    assert isinstance(pct, (int, float)), f"expected numeric, got {pct!r}"
 
 
 def test_inode_usage_pct_handles_invalid() -> None:

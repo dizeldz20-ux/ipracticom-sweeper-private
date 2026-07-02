@@ -12,6 +12,7 @@ All follow the same pattern as actions.py: snapshot → execute → RepairResult
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -24,12 +25,14 @@ from .actions import (
     _new_snapshot,
     register,
     SNAPSHOT_DIR,
+    _VALID_SQL_IDENTIFIER,
+    _VALID_SYSTEMD_UNIT,
 )
 
 
 # --- repair_rotate_nginx_logs ----------------------------------------------
 
-@register("repair_rotate_nginx_logs")
+@register("rotate_nginx_logs")
 def repair_rotate_nginx_logs(
     log_path: str = "/var/log/nginx/access.log",
     keep_rotations: int = 5,
@@ -124,7 +127,7 @@ def repair_rotate_nginx_logs(
 
 # --- repair_drop_freeswitch_cache ------------------------------------------
 
-@register("repair_drop_freeswitch_cache")
+@register("drop_freeswitch_cache")
 def repair_drop_freeswitch_cache(
     fs_cli_path: str = "fs_cli",
     host: str = "127.0.0.1",
@@ -209,7 +212,7 @@ def repair_drop_freeswitch_cache(
 
 # --- repair_reload_freeswitch_config ---------------------------------------
 
-@register("repair_reload_freeswitch_config")
+@register("reload_freeswitch_config")
 def repair_reload_freeswitch_config(
     fs_cli_path: str = "fs_cli",
     host: str = "127.0.0.1",
@@ -295,7 +298,7 @@ def repair_reload_freeswitch_config(
 
 # --- repair_clear_freeswitch_voicemail_locks -------------------------------
 
-@register("repair_clear_freeswitch_voicemail_locks")
+@register("clear_freeswitch_voicemail_locks")
 def repair_clear_freeswitch_voicemail_locks(
     lock_dir: str = "/var/lib/freeswitch/storage/voicemail/.locks",
     max_age_seconds: int = 3600,
@@ -365,7 +368,7 @@ def repair_clear_freeswitch_voicemail_locks(
 
 # --- repair_pg_vacuum ------------------------------------------------------
 
-@register("repair_pg_vacuum")
+@register("pg_vacuum")
 def repair_pg_vacuum(
     table: str = "",
     connection_string: str = "postgresql://localhost/postgres",
@@ -395,6 +398,17 @@ def repair_pg_vacuum(
         )
 
     table_clause = table if table else ""
+    if table and not _VALID_SQL_IDENTIFIER.match(table):
+        duration = int((time.time() - start) * 1000)
+        return RepairResult(
+            action="pg_vacuum",
+            target=table,
+            success=False,
+            snapshot_id=snap.id,
+            message=f"invalid table identifier: {table!r}",
+            duration_ms=duration,
+            error="invalid_table_name",
+        )
     analyze_clause = "ANALYZE" if analyze else ""
     sql = f"VACUUM {analyze_clause} {table_clause}".strip()
 
