@@ -501,8 +501,12 @@ def _invalidate_cache(name: str) -> None:
         except sqlite3.Error as exc:
             try:
                 conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as rollback_exc:
+                log_suppressed(
+                    "host_config._invalidate_cache.rollback",
+                    rollback_exc,
+                    extras={"host": name, "original": type(exc).__name__},
+                )
             log_suppressed("host_config._invalidate_cache.delete", exc,
                            extras={"host": name})
 
@@ -553,8 +557,12 @@ def _populate_cache(cfg: HostConfig) -> None:
         except sqlite3.Error as exc:
             try:
                 conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as rollback_exc:
+                log_suppressed(
+                    "host_config._populate_cache.rollback",
+                    rollback_exc,
+                    extras={"host": cfg.name, "original": type(exc).__name__},
+                )
             log_suppressed("host_config._populate_cache.write", exc,
                            extras={"host": cfg.name})
 
