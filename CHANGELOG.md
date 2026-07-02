@@ -2,6 +2,29 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.6] — 2026-07-02 — Silent-Except Final Sweep
+
+### Fixed
+- **Silent exception blocks** in **25 more files** replaced with `log_suppressed()`:
+  - `monitor/freeswitch.py`: 5 → 0 (mtime scan, jitter parse, psutil iterations)
+  - `monitor/security_baseline.py`: 4 → 0 (sshd_config read, SUID walk, listening ports)
+  - `repair/approvals_v2.py`: 4 → 0 (v2 sidecar parse, proposal reap, audit/rejected)
+  - `agent_api.py`: 3 → 0 (audit size, JSON parse, host_config load)
+  - `monitor/egress.py`: 3 → 0 (port parse, IP parse, CIDR parse)
+  - `repair/pending.py`: 2 → 0 (list, get_proposal)
+  - `config/connectors.py`, `config/secrets.py`, `chat_rag.py`, `fleet/collector.py`, `monitor/disk.py`, `monitor/fd_check.py`, `monitor/iostat.py`, `monitor/memory.py`, `monitor/network.py`, `monitor/pg_autovacuum.py`, `monitor/pg_bloat.py`, `monitor/pg_locks.py`, `monitor/pg_long_query.py`, `monitor/pg_replication_lag.py`, `monitor/process_tracker.py`, `monitor/processes.py`, `repair/actions_extra.py`, `telegram_bot/formatter.py`: 1 each
+  - `_log.py`: docstring no longer matches the silent-block regex pattern
+
+### Re-enabled
+- **Strict-zero gate** (`test_50_5_no_silent_except_blocks_in_src`) is now **active** — fails on any new `except: pass` / `except X: continue` / bare `except:` block added to `src/`.
+- Removed `pytest.skip` and the `test_silent_except_baseline_snapshot` placeholder test.
+
+### Cumulative since v1.5.0
+- **silent blocks = 0** across `src/ipracticom_sweeper/`. **99 cumulative silent blocks** replaced since v1.5.0 baseline of 50.
+
+### Notes
+- No public API change.
+
 ## [1.5.5] — 2026-07-02 — Silent-Except Slice 5.7
 
 ### Fixed

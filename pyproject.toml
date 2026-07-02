@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipracticom_sweeper"
-version = "1.5.5"
+version = "1.5.6"
 description = "AWS Linux server health monitor and auto-repair agent for iPracticom (FreeSWITCH + Postgres on AWS)"
 requires-python = ">=3.10"
 readme = "README.md"
