@@ -25,8 +25,6 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 from ipracticom_sweeper._log import log_suppressed  # noqa: F401 — referenced for documentation
 
 
@@ -71,14 +69,13 @@ def test_50_5_no_silent_except_blocks_in_src():
     """No ``except X: pass`` / ``except X: continue`` / bare ``except:``
     in ``src/ipracticom_sweeper``.
 
-    This is the strict-zero gate. It is **skipped by default** while
-    the migration is in progress; remove the ``pytest.skip`` below
-    once the baseline (see ``test_50_5_silent_except_baseline_snapshot``)
-    reaches zero.
+    This is the strict-zero gate. As of v1.5.6 the regex-based baseline
+    reaches 0 across the whole ``src/`` tree — re-enabled here.
 
-    When this test fails (after un-skipping), the fix is to convert
-    the silent block to use ``_log.log_suppressed(context, exc)`` so
-    the failure is recorded. Example::
+    Adding new silent blocks in a future commit will turn this test red;
+    fixing them with ``log_suppressed()`` keeps it green.
+
+    Example fix::
 
         # before
         try:
@@ -92,43 +89,23 @@ def test_50_5_no_silent_except_blocks_in_src():
         except OSError as exc:
             log_suppressed("module.thing", exc)
     """
-    # NOTE: Strict-zero gate is paused at v1.5.5.
-    # The previous 9 silent blocks (pass/return None/empty body) in the
-    # 9 listed files were replaced. A separate ``_scan_file`` regex-based
-    # baseline (see below) reports 40 additional blocks of the forms
-    # ``except: pass``, ``except X: continue``, bare ``except:`` — most
-    # in monitor/egress.py, monitor/security_baseline.py, repair/*.py.
-    # These will be addressed in v1.5.6+. Until then the gate stays
-    # informational (skipped) so CI stays green.
-    pytest.skip(
-        "Strict-zero gate paused at v1.5.5 — 40 additional silent blocks "
-        "remain (regex baseline: pass/continue/bare except). See CHANGELOG "
-        "[1.5.5] and test_50_5_silent_except_baseline_snapshot. To re-enable: "
-        "delete this pytest.skip() and fix every silent block."
-    )
-
-
-def test_50_5_silent_except_baseline_snapshot():
-    """Baseline snapshot — captures the current count per file so the
-    v1.5.0 release can show ``before / after`` numbers in CHANGELOG.
-
-    As of v1.5.5, the strict-zero gate is paused because 40 additional
-    silent blocks remain (regex-detected pass/continue/bare except).
-    This test now documents the (non-zero) count for the changelog.
-    """
-    counts: dict[str, int] = {}
+    findings: dict[str, list[tuple[int, str, str]]] = {}
     for path in sorted(SRC_ROOT.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
-        n = len(_scan_file(path))
-        if n:
-            counts[str(path.relative_to(REPO_ROOT))] = n
-    total = sum(counts.values())
-    # Snapshot the current count. At v1.5.5 the regex-based baseline
-    # reports ~40 silent blocks (mostly in monitor/egress.py,
-    # monitor/security_baseline.py, repair/*.py). This number should
-    # monotonically decrease across v1.5.6+; reaching 0 enables the
-    # strict-zero gate (test_50_5_no_silent_except_blocks_in_src).
+        hits = _scan_file(path)
+        if hits:
+            findings[str(path.relative_to(REPO_ROOT))] = hits
+    assert not findings, (
+        f"Strict-zero gate violated — found silent except blocks:\n"
+        + "\n".join(
+            f"  {p}:{ln} [{name}] {snip}"
+            for p, hits in findings.items()
+            for ln, name, snip in hits
+        )
+        + "\n\nFix each by wrapping the body in "
+        "`log_suppressed(context, exc)` so the failure is recorded."
+    )
 
 
 def test_50_5_per_file_baseline_does_not_regress(tmp_path):
