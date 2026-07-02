@@ -11,6 +11,8 @@ import re
 import shutil
 import subprocess
 
+from .._log import log_suppressed
+
 
 @dataclass
 class KernelError:
@@ -83,8 +85,8 @@ def collect_kernel_errors(window_minutes: int = 5) -> dict[str, Any]:
             )
             if proc.returncode == 0:
                 output = proc.stdout
-        except (subprocess.TimeoutExpired, OSError):
-            pass
+        except (subprocess.TimeoutExpired, OSError) as e:
+            log_suppressed("kernel_errors_dmesg", e)
 
     # Fallback to journalctl
     if not output:
@@ -97,8 +99,8 @@ def collect_kernel_errors(window_minutes: int = 5) -> dict[str, Any]:
                 )
                 if proc.returncode == 0:
                     output = proc.stdout
-            except (subprocess.TimeoutExpired, OSError):
-                pass
+            except (subprocess.TimeoutExpired, OSError) as e:
+                log_suppressed("kernel_errors_journalctl", e)
 
     errors = parse_dmesg_output(output, window_minutes=window_minutes)
     return {

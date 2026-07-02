@@ -13,6 +13,8 @@ import re
 import shutil
 import subprocess
 
+from .._log import log_suppressed
+
 
 @dataclass
 class SmartDiskHealth:
@@ -56,8 +58,8 @@ def parse_smartctl_output(device: str, output: str) -> SmartDiskHealth:
         if m:
             try:
                 temperature = int(m.group(1))
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as e:
+                log_suppressed("smart_check_temperature_parse", e)
             continue
         # Try health line
         m = HEALTH_RE.search(line)
@@ -70,8 +72,8 @@ def parse_smartctl_output(device: str, output: str) -> SmartDiskHealth:
             # The RAW_VALUE is the last column
             try:
                 reallocated = int(parts[-1])
-            except (ValueError, IndexError):
-                pass
+            except (ValueError, IndexError) as e:
+                log_suppressed("smart_check_reallocated_parse", e)
 
     return SmartDiskHealth(
         device=device,

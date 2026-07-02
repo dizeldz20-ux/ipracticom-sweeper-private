@@ -10,6 +10,8 @@ import re
 import subprocess
 from typing import Any
 
+from .._log import log_suppressed
+
 
 def _run_df(flag: str = "") -> list[dict[str, Any]]:
     """Run `df` with the given flag, return parsed lines."""
@@ -59,8 +61,8 @@ def _is_read_only(mount: str) -> bool:
                     continue
                 if parts[1] == mount:
                     return "ro" in parts[3].split(",")
-    except Exception:
-        pass
+    except Exception as e:
+        log_suppressed("disk_is_readonly", e)
     return False
 
 
