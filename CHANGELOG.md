@@ -2,6 +2,53 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.0] — 2026-07-02 — Suppression Engine & Dashboard API
+
+### Added
+- **Suppression engine** (Slice 3) — public CRUD on top of per-host YAML
+  - `add_suppression(name, rule, *, until=None, reason="")`
+    auto-creates the host; re-adding the same (host, rule) replaces
+    the existing entry (no duplicate stacking)
+  - `remove_suppression(name, rule) -> bool` (idempotent)
+  - `list_active_suppressions(name)` — lazy filter, expired are hidden
+  - `cleanup_expired_suppressions() -> int` — bulk, mtime-preserving
+  - 13 new tests in `test_host_config.py`
+- **Dashboard routes** (Slice 4) — REST surface for the slice 1+2+3
+  work, auth + rate-limit gated like the rest of the agent API
+  - `GET    /api/hosts`
+  - `GET    /api/hosts/<name>`
+  - `POST   /api/hosts/<name>/suppressions`   (201)
+  - `GET    /api/hosts/<name>/suppressions`   (filters expired)
+  - `DELETE /api/hosts/<name>/suppressions/<rule>`  (204 / 404)
+  - `POST   /api/hosts/_cleanup-suppressions` (returns count removed)
+  - `GET    /api/modules`  with `?kind=&tag=&risk=&available_only=`
+  - `GET    /api/modules/<kind>/<name>`
+  - 18 new tests in `test_dashboard_v14_routes.py`
+- **Audit events** — `suppression.add` and `suppression.remove` are
+  emitted via `audit.logger.emit`; `cleanup_expired_suppressions` is
+  deliberately silent (housekeeping, not an operator decision)
+
+### Changed
+- `__init__.py` + `pyproject.toml` bumped from 1.3.0 to 1.4.0
+- `Suppression` and `HostConfig.is_suppressed()` were already
+  present in v1.3.0 (data shape); the runtime API and persistence
+  behaviour is what this version adds
+
+### Hardening
+- Path-traversal and whitespace host names return 400 on every
+  per-host route, mirroring the existing `_host_yaml_path` sanitizer
+- The detail route distinguishes "unknown host" (404) from
+  "default config" (which `load_host` returns) by checking
+  `_host_yaml_path(name).exists()` before serializing
+
+### Deferred (to v1.5.0)
+- **Dashboard refactor** (1945 lines → split by route group)
+- **Remaining 44 silent except blocks** (audit/rotation.py, otel.py, formatter.py)
+- **Prediction class merge** (2 duplicates in `predict/`)
+- **Logging unification** (stdlib → structlog)
+- **Frontend SPA** — the new REST routes are JSON-only; the HTML
+  dashboard / SPA still needs to be wired to consume them
+
 ## [1.3.0] — 2026-07-02 — Per-Host Configuration & Module Registry
 
 ### Added
