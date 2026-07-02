@@ -2,6 +2,45 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.7] — 2026-07-02 — Security Hotfix
+
+### Fixed
+- **Path traversal in `<host>` URL params** (`dashboard.py:770-820`):
+  `_save_maintenance_state` and `_get_maintenance_state` now call
+  `_validate_hostname(host)` which rejects anything outside
+  `[A-Za-z0-9._-]{1,64}`. Closes a write-anything-under-maintenance-dir
+  primitive in `/v6/machines/<host>/maintenance{,/off,action}`.
+- **Path traversal in `<pid>` URL params** (`repair/pending.py`):
+  `_validate_pid(pid)` added; `get_proposal`, `set_status`, `archive` all
+  reject pids with `/`, `..`, NUL, empty. Closes escalation via
+  `/api/approvals/<pid>/{approve,reject}` and dashboard equivalents.
+- **Dashboard fail-closed missing** (`dashboard.py:main`): mirror of
+  `agent_api.main()` — refuses to start when `DASHBOARD_USER/PASS`
+  unset AND `--host` is not loopback unless `--allow-open` is passed.
+  Default port `8787 -> 8804` to avoid clash with `agent_api`.
+- **Command injection in `proposed_command`** (`dashboard.py:v6_machines_action`):
+  `shlex.quote(host)` now wraps every host interpolation in the three
+  machine-action proposals (`agent_restart`, `reboot`, `ssm_connect`).
+- **Actor spoofing in audit log** (`dashboard.py:{approval_approve,approval_reject}`):
+  `_actor_from_request()` derives the actor from `request.authorization.username`
+  (fallback: `DASHBOARD_USER` env), never `request.form['actor']`.
+  Closes log-spoofing primitive where any form-submitter could
+  impersonate another operator.
+- **Secret leakage in audit log** (`dashboard.py`): `_redact_secrets()` mirror of
+  `agent_api._redact_secrets`. `RepairProposal.kwargs` (which may include
+  passwords, API tokens) is now scrubbed before `log_audit()` writes.
+
+### Tests
+- `tests/test_v6_security_hotfix.py` (10 tests, RED → GREEN):
+  path traversal × 5, fail-closed × 2, port default × 1, command injection × 1,
+  actor spoofing × 1.
+
+### Notes
+- No public API change. Existing routes still work the same way for valid input.
+- Operators upgrading from v1.5.6: if you were running the dashboard with
+  `--host 0.0.0.0` and no auth, you must now set `DASHBOARD_USER/PASS` or pass
+  `--allow-open`. This is intentional (prevents the prior silent-open exposure).
+
 ## [1.5.6] — 2026-07-02 — Silent-Except Final Sweep
 
 ### Fixed
