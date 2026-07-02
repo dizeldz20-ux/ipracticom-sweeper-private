@@ -2,6 +2,41 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.0] — 2026-07-01 — QA Foundation: paths + log + API hardening
+
+### Added
+- **`config/paths` module** — single source of truth for `$IPRACTICOM_SWEEPER_STATE_DIR`
+  - `ROOT()`, `maintenance_dir()`, `fleet_snapshots()`, `connectors_file()`,
+    `pending_repairs()`, `approved_repairs()`, `rejected_repairs()`, `audit_log()`,
+    `ntp_history()`, `token_health()` — all cached, all env-overridable
+  - 12 new tests in `test_paths_centralization.py`
+- **`_log.log_suppressed()` helper** — replaces 5 silent `except: pass` blocks
+  in `fleet/aws_connector.py` with structured WARNING lines + DEBUG traceback
+  - 6 new tests in `test_log_suppressed.py`
+- **Built-in rate limiting** (no `flask-limiter` dependency)
+  - Per-IP sliding window: 100/min default for `/api/*`, 600/min for `/healthz`
+  - Returns 429 + `Retry-After: 60` on overage, `X-RateLimit-Remaining` on success
+  - Per-IP buckets respect `X-Forwarded-For` (first hop)
+  - Disable with `AGENT_API_RATELIMIT=0`
+  - 10 new tests in `test_rate_limit_cors.py`
+- **Localhost-only CORS** (no `flask-cors` dependency)
+  - Default allowlist: `http://localhost`, `http://localhost:5000`, `http://127.0.0.1`, `http://127.0.0.1:5000`
+  - Extend via `AGENT_API_CORS_ORIGINS=csv`
+  - No wildcard ever set; external origins return no `ACAO` header
+  - `after_request` hook attaches `Vary: Origin`, `ACAM`, `ACAH`, `ACMA`
+
+### Changed
+- **Version bump**: `pyproject.toml` and `__init__.py` updated to 1.2.0
+- **Test fixtures updated** for v1.2.0 (version assertions, vault session glob)
+
+### Deferred (to v1.3.0)
+- **Dashboard refactor** (1945 lines → split by route group)
+- **Per-host module selection UI** (QA Dashboard)
+- **Suppression / silencing** per host + per module
+- **Remaining 44 silent except blocks** (audit/rotation.py, otel.py, formatter.py)
+- **Prediction class merge** (2 duplicates in `predict/`)
+- **Logging unification** (stdlib → structlog)
+
 ## [1.1.1] — 2026-07-01 — Sprint 15 repairs + install hardening
 
 ### Added

@@ -49,9 +49,9 @@ def test_19_5_release_summary_in_vault() -> None:
     if not vault.exists():
         pytest.skip("Vault not present in this environment")
     # Look for any session summary mentioning a known release version.
-    # v1.0.0 / v1.1.0 / v1.1.1 — accept any of them.
+    # v1.0.0 / v1.1.0 / v1.1.1 / v1.2.0 — accept any of them.
     matches = []
-    for ver in ("v1.0.0", "v1.1.0", "v1.1.1"):
+    for ver in ("v1.0.0", "v1.1.0", "v1.1.1", "v1.2.0"):
         matches.extend(vault.glob(f"*{ver}*"))
     if not matches:
         pytest.skip("No release-version session summary in vault yet")
