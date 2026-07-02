@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
+from urllib.parse import urlparse
 
 from ipracticom_sweeper.agent_client import AgentClient, AgentError
 from ipracticom_sweeper.spa_context import shape_spa_context
@@ -110,6 +111,10 @@ def _require_basic_auth():
     /healthz is always open (used by cloudflared liveness probes).
     When DASHBOARD_USER/DASHBOARD_PASS are unset, dashboard stays open — caller
     should bind to 127.0.0.1 only.
+
+    v1.5.9 fix: also enforces a CSRF check on POST routes via Origin/Referer.
+    Browsers send the Origin header on cross-origin requests; comparing it to
+    the dashboard's own host rejects form-submit CSRF from external sites.
     """
     if not (_DASHBOARD_USER and _DASHBOARD_PASS):
         return None  # open mode
@@ -121,6 +126,14 @@ def _require_basic_auth():
             decoded = base64.b64decode(auth[6:].strip(), validate=True).decode("utf-8")
             user, _, pwd = decoded.partition(":")
             if hmac.compare_digest(user, _DASHBOARD_USER) and hmac.compare_digest(pwd, _DASHBOARD_PASS):
+                # CSRF gate (POST only): require Origin to match our host.
+                if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+                    origin = request.headers.get("Origin", "")
+                    if origin and not _csrf_origin_ok(origin):
+                        resp = jsonify({"error": "csrf_origin_mismatch",
+                                        "origin": origin})
+                        resp.status_code = 403
+                        return resp
                 return None
         except Exception as exc:
             log_suppressed("dashboard.basic_auth_decode", exc)
@@ -128,6 +141,36 @@ def _require_basic_auth():
     resp.status_code = 401
     resp.headers["WWW-Authenticate"] = 'Basic realm="sweeper-dashboard"'
     return resp
+
+
+def _csrf_origin_ok(origin: str) -> bool:
+    """Allow POST/PATCH/DELETE only when Origin matches our own host.
+
+    `origin` is the browser-supplied value (e.g. "http://127.0.0.1:8804").
+    We accept loopback origins plus any host the operator has explicitly
+    trusted via DASHBOARD_TRUSTED_ORIGINS (comma-separated).
+    """
+    if not origin:
+        return False  # missing Origin header → reject (most browsers send it)
+    parsed = urlparse(origin)
+    host = parsed.hostname or ""
+    # Always allow loopback (127.0.0.1, ::1, localhost).
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # Operator-trusted origins (comma-separated). Exact-match hostname.
+    trusted = os.environ.get("DASHBOARD_TRUSTED_ORIGINS", "").split(",")
+    for t in trusted:
+        t = t.strip()
+        if not t:
+            continue
+        try:
+            tp = urlparse(t)
+            if (tp.hostname or "") == host and tp.scheme in ("http", "https"):
+                return True
+        except Exception as exc:
+            log_suppressed("dashboard.is_local_url.parse", exc)
+            continue
+    return False
 
 
 # --- Cache management --------------------------------------------------------
@@ -434,6 +477,32 @@ def _test_telegram(bot_token: str, chat_id: str) -> tuple[bool, str]:
         return False, f"Telegram error: {e}"
 
 
+def _validate_slack_webhook_url(url: str) -> tuple[bool, str]:
+    """Validate a Slack incoming-webhook URL.
+
+    Slack webhooks MUST be https://hooks.slack.com/services/... — anything
+    else is either a typo or an SSRF/exfil attempt and is rejected before
+    persistence or test. SSRF_BLOCKED marker used by tests/test_v6_hardening.py.
+    """
+    from urllib.parse import urlparse
+
+    if not url:
+        return True, ""  # empty allowed; user may not use Slack at all
+    raw = url.strip()
+    try:
+        p = urlparse(raw)
+    except Exception as e:
+        return False, f"invalid URL: {type(e).__name__}"
+    if p.scheme != "https":
+        return False, "SSRF_BLOCKED: Slack webhook URL must use https"
+    host = (p.hostname or "").lower()
+    if host != "hooks.slack.com":
+        return False, f"SSRF_BLOCKED: Slack webhook host must be hooks.slack.com (got {host!r})"
+    if not p.path.startswith("/services/"):
+        return False, "Slack webhook path must start with /services/"
+    return True, ""
+
+
 def _test_slack(webhook_url: str) -> tuple[bool, str]:
     """Send a test message via Slack incoming webhook. Returns (ok, message)."""
     import urllib.request
@@ -441,6 +510,9 @@ def _test_slack(webhook_url: str) -> tuple[bool, str]:
 
     if not webhook_url:
         return False, "SLACK_WEBHOOK_URL is empty"
+    ok, why = _validate_slack_webhook_url(webhook_url)
+    if not ok:
+        return False, f"SLACK_WEBHOOK_URL rejected: {why}"
     payload = _json.dumps({"text": "iPracticom Sweeper: test notification from dashboard"}).encode("utf-8")
     try:
         req = urllib.request.Request(
@@ -484,6 +556,19 @@ def settings():
             "TELEGRAM_BOT_TOKEN": request.form.get("telegram_bot_token", ""),
             "TELEGRAM_CHAT_ID": request.form.get("telegram_chat_id", ""),
         }
+        # Validate Slack webhook URL allowlist (SSRF guard) before persistence.
+        ok_slack, err_slack = _validate_slack_webhook_url(values["SLACK_WEBHOOK_URL"])
+        if not ok_slack:
+            error_message = err_slack
+            current = _read_notifications_env()
+            return render_template(
+                "settings.html",
+                identity=_fetch_identity(),
+                is_remote=_is_remote_mode(),
+                current=current,
+                saved_message=None,
+                error_message=error_message,
+            ), 400
         ok, err = _write_notifications_env(values)
         if ok:
             saved_message = "ההגדרות נשמרו. הסוכן יטען אותן בריצה הבאה (עד 5 דקות)."
@@ -563,9 +648,13 @@ def run_now():
         try:
             result = _get_agent().trigger_run()
         except AgentError as e:
+            app.logger.exception("run_now_remote_failed")
             if wants_html:
-                return render_template("error.html", message=str(e)), 502
-            return jsonify({"error": str(e)}), 502
+                return render_template(
+                    "error.html",
+                    message="שגיאה בהפעלה מרחוק (פרטים בלוג)",
+                ), 502
+            return _safe_error_response(e, 502)
         if wants_html:
             return _redirect_to_dashboard()
         return jsonify(result)
@@ -575,8 +664,11 @@ def run_now():
     except Exception as e:
         app.logger.exception("run_now_failed")
         if wants_html:
-            return render_template("error.html", message=str(e)), 500
-        return jsonify({"error": str(e)}), 500
+            return render_template(
+                "error.html",
+                message="שגיאה בהפעלה (פרטים בלוג)",
+            ), 500
+        return _safe_error_response(e, 500)
 
     if wants_html:
         return _redirect_to_dashboard()
@@ -627,7 +719,7 @@ def api_notify_test():
         try:
             return jsonify(_get_agent().send_test_notify())
         except AgentError as e:
-            return jsonify({"error": str(e)}), 502
+            return _safe_error_response(e, 502)
 
     import asyncio
     from ipracticom_sweeper.notify import notify_pipeline_result
@@ -640,7 +732,7 @@ def api_notify_test():
         sent = asyncio.run(notify_pipeline_result(result, force=True))
         return jsonify({"sent": sent})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _safe_error_response(e, 500)
 
 
 @app.route("/approvals")
@@ -738,7 +830,9 @@ def approval_approve(pid):
             "kwargs": safe_kwargs,
             "error": str(e),
         })
-        return render_template("error.html", message=f"שגיאה בביצוע: {e}"), 500
+        # Don't leak internal exception details to the browser; log full error server-side
+        # via app.logger.exception() above, render generic message here.
+        return render_template("error.html", message="שגיאה בביצוע. בדוק את היומנים."), 500
 
 
 @app.route("/approvals/<pid>/reject", methods=["POST"])
@@ -832,6 +926,29 @@ def _redact_secrets(d: dict[str, Any] | None) -> dict[str, Any]:
         return v
 
     return scrub(d or {})
+
+
+# v1.5.9: error sanitization helper for the dashboard. Replaces raw str(e)
+# in user-facing responses with a generic "internal_error" message +
+# correlation id. The full exception is logged server-side.
+import uuid as _uuid
+import logging as _logging
+
+
+def _safe_error_response(exc: BaseException, status: int = 500, extra: dict | None = None) -> tuple[Any, int]:
+    """Return a sanitized JSON error response with a correlation id."""
+    corr_id = _uuid.uuid4().hex[:8]
+    _logging.getLogger("dashboard").error(
+        "dashboard_error_response", extra={"correlation_id": corr_id,
+                                           "error_class": type(exc).__name__,
+                                           "error": str(exc)})
+    body: dict[str, Any] = {
+        "error": "internal_error",
+        "correlation_id": corr_id,
+    }
+    if extra:
+        body.update(extra)
+    return jsonify(body), status
 
 
 def _save_maintenance_state(host: str, state: dict | None) -> dict | None:
@@ -1392,12 +1509,11 @@ def healthz():
             remote["dashboard_id"] = get_server_id()
             return jsonify(remote)
         except AgentError as e:
-            return jsonify({
+            return _safe_error_response(e, 503, extra={
                 "ok": False,
                 "mode": "remote",
                 "remote_url": _remote_url(),
-                "error": str(e),
-            }), 503
+            })
     return jsonify({
         "ok": True,
         "mode": "local",

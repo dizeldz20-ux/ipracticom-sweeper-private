@@ -29,6 +29,7 @@ import argparse
 import collections  # for rate-limit deque
 import hmac
 import json
+import logging
 import os
 import threading
 import time
@@ -124,6 +125,29 @@ def _redact_secrets(d: dict[str, Any] | None) -> dict[str, Any]:
     return scrub(d or {})
 
 
+# v1.5.9: error sanitization helper. Replaces raw str(e) in client responses
+# with a generic message + correlation id. The full exception is logged
+# server-side for operator investigation. This prevents leaking filesystem
+# paths, SQL fragments, and library versions to unauthenticated callers.
+import uuid as _uuid
+
+
+def _safe_error_response(exc: BaseException, status: int = 500) -> tuple[Any, int]:
+    """Return a sanitized JSON error response with a correlation id.
+
+    The full exception message is logged but never returned to the client.
+    Use this for any 4xx/5xx response where `exc` was caught.
+    """
+    corr_id = _uuid.uuid4().hex[:8]
+    logger = logging.getLogger("agent_api")
+    logger.error("api_error_response", correlation_id=corr_id,
+                 error_class=type(exc).__name__, error=str(exc))
+    return jsonify({
+        "error": "internal_error",
+        "correlation_id": corr_id,
+    }), status
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
     token = os.environ.get("AGENT_API_TOKEN", "")
@@ -204,14 +228,24 @@ def create_app() -> Flask:
     # (e.g. dashboard on :5000 calling agent API on :8787). No wildcard
     # origin is ever set — operators must opt in to remote origins via
     # AGENT_API_CORS_ORIGINS=comma,separated,list.
+    # Reject `*` outright: a wildcard in the allowlist would leak the
+    # Authorization header to any origin.
+    _cors_raw = [
+        o.strip()
+        for o in os.environ.get("AGENT_API_CORS_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    if "*" in _cors_raw or any(
+        o == "*" or o.endswith("/*") for o in _cors_raw
+    ):
+        raise RuntimeError(
+            "AGENT_API_CORS_ORIGINS must not contain wildcards ('*'); "
+            "explicit origins only — see OWASP CORS misconfiguration."
+        )
     _CORS_ALLOWED = (
         {"http://localhost", "http://localhost:5000", "http://127.0.0.1",
          "http://127.0.0.1:5000"}
-        | {
-            o.strip()
-            for o in os.environ.get("AGENT_API_CORS_ORIGINS", "").split(",")
-            if o.strip()
-        }
+        | set(_cors_raw)
     )
 
     @app.after_request
@@ -436,7 +470,7 @@ def create_app() -> Flask:
             try:
                 body = path.read_bytes()
             except OSError as e:
-                return jsonify({"error": str(e)}), 500
+                return _safe_error_response(e), 500
             filename = f"sweeper-{name}-{int(time.time())}.{path.suffix.lstrip('.') or 'txt'}"
 
         # Cap size — if we'd exceed, truncate and note it in the trailer.
@@ -464,6 +498,7 @@ def create_app() -> Flask:
     # --- Run trigger -------------------------------------------------------
 
     @app.route("/api/run", methods=["POST"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_run():
         """Trigger a fresh sweep, cache the result, return it."""
@@ -477,11 +512,12 @@ def create_app() -> Flask:
             _write_last_result(d)
             return jsonify(d)
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return _safe_error_response(e), 500
 
     # --- Notify (admin only, gated by token) -------------------------------
 
     @app.route("/api/notify/test", methods=["POST"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_notify_test():
         import asyncio
@@ -494,7 +530,7 @@ def create_app() -> Flask:
             sent = asyncio.run(notify_pipeline_result(result, force=True))
             return jsonify({"sent": sent})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            return _safe_error_response(e), 500
 
     # --- Slack Events endpoint -------------------------------------------
     # Receives button clicks from Slack (Approve / Silence / Run Repair).
@@ -506,7 +542,21 @@ def create_app() -> Flask:
     # a valid signature (HMAC-SHA256) which is cryptographically stronger.
 
     @app.route("/slack/events", methods=["POST"])
+    @_rate_limit("slack_events", _RL_API_DEFAULT)
     def slack_events():
+        # IP allowlist (optional, opt-in via env): if SLACK_ALLOWED_IPS is set,
+        # reject requests from outside. Empty/missing means allow all (HMAC
+        # signature still required).
+        allowed_ips = {
+            ip.strip() for ip in os.environ.get("SLACK_ALLOWED_IPS", "").split(",")
+            if ip.strip()
+        }
+        if allowed_ips and request.remote_addr not in allowed_ips:
+            return jsonify({
+                "error": "forbidden",
+                "reason": "remote_addr not in SLACK_ALLOWED_IPS",
+            }), 403
+
         signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
         if not signing_secret:
             return jsonify({
@@ -540,6 +590,7 @@ def create_app() -> Flask:
         return jsonify([c.to_dict() for c in load_connectors()])
 
     @app.route("/api/connectors", methods=["POST"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_connectors_create():
         """Create a new connector. Body: {name, instance_id, region?, tags?, enabled?}"""
@@ -547,11 +598,11 @@ def create_app() -> Flask:
         try:
             connector = Connector.from_dict(payload)
         except (ValueError, TypeError) as e:
-            return jsonify({"error": str(e)}), 400
+            return _safe_error_response(e), 400
         try:
             add_connector(connector)
         except ValueError as e:  # duplicate name
-            return jsonify({"error": str(e)}), 409
+            return _safe_error_response(e), 409
         return jsonify(connector.to_dict()), 201
 
     @app.route("/api/connectors/<name>", methods=["GET"])
@@ -564,6 +615,7 @@ def create_app() -> Flask:
         return jsonify(c.to_dict())
 
     @app.route("/api/connectors/<name>", methods=["PATCH"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_connectors_update(name):
         """Update fields on a connector. Body: any subset of mutable fields.
@@ -576,10 +628,11 @@ def create_app() -> Flask:
         except KeyError:
             return jsonify({"error": "not_found"}), 404
         except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+            return _safe_error_response(e), 400
         return jsonify(updated.to_dict())
 
     @app.route("/api/connectors/<name>", methods=["DELETE"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_connectors_delete(name):
         """Delete a connector. Returns 204 on success, 404 if not found."""
@@ -588,6 +641,7 @@ def create_app() -> Flask:
         return ("", 204)
 
     @app.route("/api/connectors/<name>/test", methods=["POST"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_connectors_test(name):
         """Trigger a single SSM collection for one connector (sync, may take 5-30s).
@@ -606,10 +660,10 @@ def create_app() -> Flask:
             return jsonify({"ok": True, "snapshot": snapshot})
         except SsmError as e:
             mark_connector_error(name, str(e))
-            return jsonify({"ok": False, "error": str(e)}), 502
+            return _safe_error_response(e, 502)
         except Exception as e:
             mark_connector_error(name, str(e))
-            return jsonify({"ok": False, "error": str(e)}), 500
+            return _safe_error_response(e, 500)
 
     # URL verification handshake (Slack sends this once when registering the URL).
     # We reply with the challenge value to confirm we own this endpoint.
@@ -788,6 +842,7 @@ def create_app() -> Flask:
         })
 
     @app.route("/api/approvals/<pid>/approve", methods=["POST"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_approvals_approve(pid):
         """Approve a pending proposal: execute the repair, archive as approved."""
@@ -822,7 +877,8 @@ def create_app() -> Flask:
             }
             new_status = "executed" if result.success else "failed"
         except Exception as e:
-            result_dict = {"action": proposal.action, "success": False, "error": str(e)}
+            app.logger.exception("approval_execute_failed for pid=%s", pid)
+            result_dict = {"action": proposal.action, "success": False, "error": "internal_error"}
             new_status = "failed"
 
         pending_mod.set_status(pid, new_status)
@@ -843,6 +899,7 @@ def create_app() -> Flask:
         })
 
     @app.route("/api/approvals/<pid>/reject", methods=["POST"])
+    @_rate_limit("api", _RL_API_DEFAULT)
     @require_auth
     def api_approvals_reject(pid):
         """Reject a pending proposal: archive as rejected (no execution).
@@ -1217,7 +1274,7 @@ def create_app() -> Flask:
                 reason=body.get("reason", ""),
             )
         except ValueError as e:
-            return jsonify({"error": "invalid", "detail": str(e)}), 400
+            return _safe_error_response(e, 400)
         return jsonify(_suppression_to_dict(entry)), 201
 
     @require_auth
@@ -1288,7 +1345,7 @@ def create_app() -> Flask:
                     available_only=available_only,
                 )
         except ValueError as e:
-            return jsonify({"error": "invalid", "detail": str(e)}), 400
+            return _safe_error_response(e, 400)
         return jsonify([_module_info_to_dict(m) for m in modules])
 
     @require_auth

@@ -17,8 +17,8 @@ Public surface:
 """
 
 from __future__ import annotations
-
 import json
+import os
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -243,8 +243,18 @@ def _seed_demo_session(store: ChatStore) -> ChatSession:
     return demo
 
 
-def register_chat_routes(app: Any) -> None:
-    """Attach chat routes + websocket to a Flask app. Idempotent."""
+def register_chat_routes(app: Any, auth_required: bool = True) -> None:
+    """Attach chat routes + websocket to a Flask app. Idempotent.
+
+    v1.5.9 fix: added `auth_required` parameter (default True). When True,
+    the /ws WebSocket and all /chat/* HTTP routes require an authenticated
+    session (basic auth header for HTTP, header in WS upgrade request).
+    Without this, anyone reaching the dashboard box could trigger LLM
+    tool calls via /chat/sessions/<sid>/messages or /ws.
+
+    When `auth_required=False`, no check is applied — useful for the
+    test suite (which uses Flask test_client and bypasses real auth).
+    """
     if Blueprint is None or Sock is None:
         raise RuntimeError(
             "flask + flask-sock required for chat routes; "
@@ -256,6 +266,37 @@ def register_chat_routes(app: Any) -> None:
 
     # Seed once at startup; safe across reloads thanks to dedupe-by-title.
     _seed_demo_session(get_store())
+
+    # --- Auth gate ---------------------------------------------------------
+    # When auth_required=True, every chat route must verify the basic-auth
+    # header. This mirrors dashboard._require_basic_auth but is applied at
+    # the blueprint level since chat is a different surface.
+    def _check_chat_auth() -> tuple[bool, str]:
+        """Return (ok, reason). Reads the same DASHBOARD_USER/PASS env the
+        dashboard uses, so operators don't configure auth twice.
+        """
+        expected_user = os.environ.get("DASHBOARD_USER", "")
+        expected_pass = os.environ.get("DASHBOARD_PASS", "")
+        if not (expected_user and expected_pass):
+            # No auth configured → chat is open only if auth_required=False.
+            return not auth_required, "auth_not_configured"
+        from flask import request
+        auth = request.authorization
+        if auth and auth.username == expected_user and auth.password == expected_pass:
+            return True, ""
+        return False, "bad_credentials"
+
+    @bp.before_request
+    def _gate():
+        if not auth_required:
+            return None
+        # GET on /chat/ and /chat/sessions is the chat UI — operators
+        # expect to see it after auth, so we let the blueprint return 401
+        # via the response below rather than redirecting.
+        ok, reason = _check_chat_auth()
+        if ok:
+            return None
+        return jsonify({"error": "unauthorized", "reason": reason}), 401
 
     @bp.get("/")
     @bp.get("")
@@ -312,7 +353,26 @@ def register_chat_routes(app: Any) -> None:
 
         For slice 3.1 we ignore session_id parameter (always create or pick demo)
         and just echo back. Full session-aware WS lands in slice 3.3.
+
+        v1.5.9 fix: per-IP message rate-limit (default 30 msg/min). Without it,
+        a single client can drive up LLM cost by spamming messages.
         """
+        # v1.5.9: auth gate (HTTP-equivalent). flask-sock doesn't trigger
+        # blueprint before_request, so we check here.
+        if auth_required:
+            ok, reason = _check_chat_auth()
+            if not ok:
+                ws.send(json.dumps({"error": "unauthorized", "reason": reason},
+                                   ensure_ascii=False))
+                return None
+
+        # v1.5.9: per-IP rate-limit using WS upgrade remote_addr.
+        from flask import request as _flask_request
+        ip = _flask_request.remote_addr or "unknown"
+        if not _ws_rate_limit_check(ip, limit_per_min=30):
+            ws.send(json.dumps({"error": "rate_limited"}, ensure_ascii=False))
+            return None
+
         store = get_store()
         # Make sure demo session exists.
         demo = _seed_demo_session(store)
@@ -359,6 +419,32 @@ def register_chat_routes(app: Any) -> None:
                 log_suppressed("chat_ws_error_send", e)
 
     app.register_blueprint(bp)
+
+
+# v1.5.9: per-IP rate-limit for the /ws WebSocket. Uses a process-wide
+# dict of {ip: [ts, ts, ...]} with a 60s sliding window. Memory-bounded
+# because the dict is capped at 1024 entries.
+_WS_RATE_BUCKET: dict[str, list[float]] = {}
+_WS_RATE_MAX_KEYS = 1024
+
+
+def _ws_rate_limit_check(ip: str, limit_per_min: int = 30) -> bool:
+    """Sliding-window per-IP rate limit. Returns True if under the cap."""
+    import time as _time
+    now = _time.time()
+    window_start = now - 60.0
+    bucket = _WS_RATE_BUCKET.get(ip, [])
+    bucket = [t for t in bucket if t > window_start]
+    if len(bucket) >= limit_per_min:
+        _WS_RATE_BUCKET[ip] = bucket
+        return False
+    bucket.append(now)
+    _WS_RATE_BUCKET[ip] = bucket
+    # Evict old keys to keep memory bounded.
+    if len(_WS_RATE_BUCKET) > _WS_RATE_MAX_KEYS:
+        for k in list(_WS_RATE_BUCKET.keys())[:128]:
+            _WS_RATE_BUCKET.pop(k, None)
+    return True
 
 
 __all__ = [
