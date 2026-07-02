@@ -58,7 +58,7 @@
   kind: monitor
   title_en: "FreeSWITCH inode usage"
   title_he: "שימוש inode ב-FreeSWITCH"
-  description: "Critical for FS: inodes exhausted = new calls fail."
+  description: "Critical for FS: inodes exhausted = new calls fail (see monitor/freeswitch.py check_fs13_log_disk_usage)."
   params:
     - {name: threshold_pct, type: int, default: 90}
   tags: [freeswitch, fs]
@@ -68,7 +68,7 @@
   kind: monitor
   title_en: "FreeSWITCH process health"
   title_he: "בריאות תהליך FreeSWITCH"
-  description: "Checks fs_cli 'status' output for running/registered gateways."
+  description: "Checks fs_cli 'status' output for running/registered gateways (see monitor/freeswitch.py check_fs01..15)."
   params: []
   tags: [freeswitch, fs]
   risk: high
@@ -329,6 +329,37 @@
   tags: [disk, logs]
   risk: low
 
+- name: health
+  kind: monitor
+  title_en: "Agent self-health (heartbeat tracker)"
+  title_he: "בריאות סוכן (מעקב heartbeat)"
+  description: "Tracks the agent's own heartbeat file; flags missing/stale/corrupt runs."
+  params:
+    - {name: max_age_sec, type: int, default: 7200}
+  tags: [self, agent, heartbeat]
+  risk: low
+
+- name: healthz_probe
+  kind: monitor
+  title_en: "Active HTTP /healthz probe"
+  title_he: "בדיקת /healthz פעילה"
+  description: "HTTP GET to a configured healthz endpoint; 2xx ok, 5xx warn, timeout/conn-err crit."
+  params:
+    - {name: timeout_sec, type: float, default: 5.0}
+    - {name: latency_warn_ms, type: float, default: 2000.0}
+  tags: [http, healthz, services]
+  risk: low
+
+- name: processes
+  kind: monitor
+  title_en: "Process health (zombies, stuck procs, top consumers)"
+  title_he: "בריאות תהליכים (זומבים, תקועים, צרכני CPU)"
+  description: "Detects zombies, stuck processes, and top CPU consumers via /proc."
+  params:
+    - {name: zombie_warn_count, type: int, default: 0}
+  tags: [processes, performance]
+  risk: low
+
 - name: uptime
   kind: monitor
   title_en: "System uptime"
@@ -359,22 +390,17 @@
 
 - name: aws
   kind: monitor
-  title_en: "AWS metadata / region"
-  title_he: "AWS metadata / region"
-  description: "Verifies this host can reach IMDS and is in the expected region."
+  title_en: "AWS region sanity"
+  title_he: "בדיקת אזור AWS"
+  description: "Confirms the host is in the expected AWS region."
   params:
     - {name: expected_region, type: str, default: "il-central-1"}
   tags: [aws, cloud]
   risk: low
 
-- name: checks
-  kind: monitor
-  title_en: "Composite checks orchestrator"
-  title_he: "מתאם בדיקות מורכבות"
-  description: "Runs a configured list of sub-checks and aggregates."
-  params: []
-  tags: [orchestrator]
-  risk: low
+# Note: 'checks' is the orchestrator (monitor/checks.py), not a leaf monitor;
+# the catalog intentionally omits it. Cross-check policy lives in
+# config/module_registry._monitor_names().
 
 # ---------------------------------------------------------------------------
 # Repairs

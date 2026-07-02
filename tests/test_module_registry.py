@@ -176,3 +176,33 @@ def test_30_2_drift_logged_but_doesnt_raise(caplog):
     # Some drift may or may not exist depending on the catalog state;
     # we just assert we get a result back.
     assert isinstance(mods, list)
+
+
+# ---------------------------------------------------------------------------
+# Drift hardening — every catalog entry must point at real code (or be
+# explicitly suppressed). Three historic drift entries fixed in this slice:
+# - fs_inode_check / freeswitch_health lived in monitor/freeswitch.py;
+#   the catalog now points at that single file.
+# - 'checks' is the orchestrator, not a leaf monitor — removed from catalog.
+# ---------------------------------------------------------------------------
+
+_IGNORED_DRIFT = set()  # no exemptions yet; tighten as catalog grows
+
+
+def test_30_2_no_catalog_only_entries_except_ignored():
+    """Every catalog monitor entry must resolve to a real monitor file."""
+    mods = mr.discover_modules(strict=False)
+    catalog_only = [
+        m for m in mods
+        if m.catalog_only and m.name not in _IGNORED_DRIFT
+    ]
+    assert catalog_only == [], (
+        f"catalog entries without matching code: "
+        f"{[(m.kind, m.name) for m in catalog_only]}"
+    )
+
+
+def test_30_2_strict_mode_raises_on_any_drift():
+    """strict=True is the CI/dashbord-deployment gate — must raise on drift."""
+    from ipracticom_sweeper.config import module_registry as mr_mod
+    mr_mod.discover_modules(strict=True)  # noqa: must not raise

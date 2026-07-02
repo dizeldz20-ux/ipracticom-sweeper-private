@@ -132,10 +132,20 @@ def _registered_function_names(package: str) -> set[str]:
     return names
 
 
+_MONITOR_ALIASES: dict[str, str] = {
+    # catalog name → canonical monitor file stem
+    "fs_inode_check": "freeswitch",          # see check_fs13_log_disk_usage
+    "freeswitch_health": "freeswitch",       # see check_fs01..15 in monitor/freeswitch.py
+}
+
+
 def _monitor_names() -> set[str]:
     """Monitor modules live in ipracticom_sweeper.monitor/ as one file
     per monitor. The file stem is the canonical name — there's no
     per-monitor top-level function we can introspect reliably.
+
+    Aliases in ``_MONITOR_ALIASES`` let the catalog name diverge from
+    the file stem (e.g. for grouped sub-checks inside a single file).
     """
     import ipracticom_sweeper.monitor as pkg
     out: set[str] = set()
@@ -144,6 +154,7 @@ def _monitor_names() -> set[str]:
             # 'checks' is the orchestrator, not a leaf monitor
             continue
         out.add(info.name)
+    out.update(_MONITOR_ALIASES.values())
     return out
 
 
@@ -197,15 +208,19 @@ def discover_modules(*, strict: bool = False, lang: str = "en") -> list[ModuleIn
         if kind == KIND_MONITOR:
             # Catalog names may have suffixes (e.g. "memory_check");
             # match by either exact stem or _check suffix.
+            if name in _MONITOR_ALIASES:
+                return _MONITOR_ALIASES[name] in monitors
             return (name in monitors
                     or name.removesuffix("_check") in monitors
                     or name.removesuffix("_v2") in monitors
                     or name.removesuffix("_v2_part2") in monitors
-                    or f"{name}_check" in monitors)
+                    or f"{name}_check" in monitors
+                    or name.removesuffix("_health") in monitors)
         if kind == KIND_REPAIR:
             return name in repairs
         if kind == KIND_RUNBOOK:
-            return f"{name}_runbook" in runbooks
+            return (f"{name}_runbook" in runbooks
+                    or f"{name}_recovery_runbook" in runbooks)
         return False
 
     result = [_to_module_info(d, in_code(d)) for d in catalog]
@@ -218,19 +233,53 @@ def discover_modules(*, strict: bool = False, lang: str = "en") -> list[ModuleIn
                 raise ValueError(msg)
             logger.warning(msg)
 
-    # Reverse drift: code with no catalog entry
-    catalog_names = {(m.kind, m.name) for m in result}
+    # Reverse drift: code with no catalog entry. We must account for
+    # catalog aliases AND for the ``name+_check``/``name+_health``
+    # suffix convention — the catalog can name a monitor ``disk_check``
+    # while the on-disk file is ``disk.py``. Those stems are legitimate
+    # backends for catalog entries and must not appear as code-only.
+    catalog_names: set[tuple[str, str]] = {(m.kind, m.name) for m in result}
+    catalog_stems_by_kind: dict[str, set[str]] = {}
+    for m in result:
+        catalog_stems_by_kind.setdefault(m.kind, set()).add(m.name)
+    canonical_monitor_targets = set(_MONITOR_ALIASES.values())
+    alias_keys = set(_MONITOR_ALIASES.keys())  # names that have explicit aliases
+
     for kind, names in (
         (KIND_MONITOR, monitors),
         (KIND_REPAIR, repairs),
         (KIND_RUNBOOK, runbooks),
     ):
+        catalog_stems = catalog_stems_by_kind.get(kind, set())
         for n in names:
-            if (kind, n) not in catalog_names:
-                msg = f"code-only: {kind}:{n} not in catalog"
-                if strict:
-                    raise ValueError(msg)
-                logger.info(msg)
+            if (kind, n) in catalog_names:
+                continue
+            if kind == KIND_MONITOR and n in canonical_monitor_targets:
+                # legitimate alias target; skip
+                continue
+            if kind == KIND_MONITOR:
+                # suffix-stripped catalog names map to these stems
+                if n in alias_keys:
+                    continue
+                catalog_stripped = {
+                    c.removesuffix("_check") for c in catalog_stems
+                } | {
+                    c.removesuffix("_health") for c in catalog_stems
+                }
+                if n in catalog_stripped:
+                    continue
+            if kind == KIND_RUNBOOK:
+                # runbooks may use ``name_runbook`` or ``name_recovery_runbook``
+                if (n in catalog_stems
+                        or n.removesuffix("_runbook") in catalog_stems
+                        or n.removesuffix("_recovery_runbook") in catalog_stems
+                        or f"{n}_runbook" in catalog_stems
+                        or f"{n}_recovery_runbook" in catalog_stems):
+                    continue
+            msg = f"code-only: {kind}:{n} not in catalog"
+            if strict:
+                raise ValueError(msg)
+            logger.info(msg)
 
     result.sort(key=lambda m: (m.kind, m.name))
     return result
