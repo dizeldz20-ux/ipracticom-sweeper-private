@@ -1,7 +1,7 @@
 # iPracticom Sweeper — common tasks
 # Use: make <target>
 
-.PHONY: help install test test-fast run status logs uninstall dashboard clean quickstart lint
+.PHONY: help install test test-fast run status logs uninstall dashboard clean quickstart lint verify doctor agent-api
 
 PYTHON ?= python3
 PIP ?= $(PYTHON) -m pip
@@ -12,6 +12,14 @@ help:  ## Show this help
 
 install:  ## Install package in editable mode (PEP-668 safe)
 	$(PIP) install -e . --break-system-packages
+
+install-all:  ## Install package + telegram extras + test deps
+	$(PIP) install -e ".[all]" --break-system-packages
+
+verify:  ## Pre-flight self-check (no install required)
+	$(PYTHON) scripts/verify_install.py
+
+doctor: verify  ## Alias for `make verify`
 
 quickstart:  ## Run sweeper once (no systemd, no install)
 	bash quickstart.sh

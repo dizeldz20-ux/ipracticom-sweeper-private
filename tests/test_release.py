@@ -14,16 +14,18 @@ INSTALL_SH = REPO_ROOT / "install.sh"
 BOOTSTRAP_SH = REPO_ROOT / "bootstrap.sh"
 
 
-def test_19_3_version_1_0_0_in_pyproject() -> None:
+def test_19_3_version_in_pyproject() -> None:
+    """Version in pyproject.toml must be the current release (1.1.1)."""
     text = PYPROJECT.read_text()
     m = re.search(r'^version\s*=\s*"([0-9.]+)"', text, re.M)
     assert m is not None
-    assert m.group(1) == "1.0.0"
+    assert m.group(1) == "1.1.1"
 
 
-def test_19_3_version_1_0_0_in_init() -> None:
+def test_19_3_version_in_init() -> None:
+    """__version__ in __init__.py must match pyproject (1.1.1)."""
     text = INIT.read_text()
-    assert '__version__ = "1.0.0"' in text
+    assert '__version__ = "1.1.1"' in text
 
 
 def test_19_3_changelog_has_1_0_0_section() -> None:

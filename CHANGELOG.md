@@ -2,6 +2,33 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.1] — 2026-07-01 — Sprint 15 repairs + install hardening
+
+### Added
+- **Sprint 15 repair coverage**: 5 new repair actions registered in `actions_extra.py`
+  - `repair_rotate_nginx_logs`: rotate nginx access/error logs and reload
+  - `repair_drop_freeswitch_cache`: drop FreeSWITCH mod_sofia/db caches
+  - `repair_reload_freeswitch_config`: reload FreeSWITCH XML config (`fs_cli reloadxml`)
+  - `repair_vm_lock_clear`: clear stale VM heartbeat locks
+  - `repair_pg_vacuum`: per-table VACUUM with explicit table-name validation
+- **Install hardening for installing agents**:
+  - `pyproject.toml` now declares `[project.scripts]`: `ipracticom-sweeper`, `ipracticom-dashboard`, `ipracticom-agent-api`
+  - `make verify` / `make doctor` runs `scripts/verify_install.py` (Python + pip + deps + entry points + tests)
+  - `make install-all` adds `[telegram]` + `[test]` extras in one shot
+  - `scripts/verify_install.py`: 6-check pre-flight, exit 0 only if all required pass
+
+### Changed
+- **Naming consistency**: `actions_extra.py` repairs now register without `repair_` prefix to match `actions.py`
+- **`HIGH_RISK_ACTIONS` in `approvals_v2.py`**: aligned to real registry names (was dead code)
+- **Auth fail-closed**: `agent_api.py` now exits 1 if `AGENT_API_TOKEN` is missing AND bind host is public (0.0.0.0/::)
+- **Secret redaction in audit log**: `_redact_secrets()` helper scrubs `password`, `token`, `api_key`, `secret` from kwargs before logging
+- **Reject reason required**: `POST /api/approvals/<id>/reject` returns 400 if `reason` is empty
+- **Version bump**: `pyproject.toml` and `__init__.py` updated to 1.1.1
+
+### Fixed
+- **Command injection guard**: `service_restart` validates `unit` against `^[a-zA-Z0-9_.@-]+$`; `pg_vacuum` validates `table` against `^[a-zA-Z0-9_.]+$`
+- **404 wins over 400** in reject route (unknown-id probes don't leak "reason required")
+
 ## [1.1.0] — 2026-07-01 — Deep Checks v2 + Approval Workflow v2
 
 ### Added

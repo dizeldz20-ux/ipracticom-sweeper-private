@@ -159,7 +159,10 @@ def test_approvals_reject_archives_proposal(client, pending_tmp):
         action="service_restart", kwargs={"unit": "x"},
         reason="test", proposed_command="systemctl restart x",
     )
-    r = client.post(f"/api/approvals/{p.id}/reject")
+    r = client.post(
+        f"/api/approvals/{p.id}/reject",
+        json={"reason": "test rejection"},
+    )
     assert r.status_code == 200
     body = r.get_json()
     assert body["ok"] is True

@@ -753,14 +753,18 @@ def create_app() -> Flask:
         """
         from ipracticom_sweeper.repair import pending as pending_mod
 
+        # Check proposal existence first so 404 wins over 400 — that way
+        # unknown-id probes don't accidentally leak "reason required" hints
+        # and existing 404 tests keep passing.
+        proposal = pending_mod.get_proposal(pid)
+        if proposal is None:
+            return jsonify({"error": "not_found"}), 404
+
         payload = request.get_json(silent=True) or {}
         reason = (payload.get("reason") or "").strip()
         if not reason:
             return jsonify({"error": "reason_required"}), 400
 
-        proposal = pending_mod.get_proposal(pid)
-        if proposal is None:
-            return jsonify({"error": "not_found"}), 404
         if proposal.status != "pending":
             return jsonify({
                 "error": "already_decided",
