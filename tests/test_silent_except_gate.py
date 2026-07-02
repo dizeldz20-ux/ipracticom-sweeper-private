@@ -14,10 +14,10 @@ Adding new silent blocks in a future commit will turn this test red;
 fixing them with ``log_suppressed`` keeps it green.
 
 The initial baseline of 50 silent blocks is tracked in
-``CHANGELOG.md`` under [1.5.0] — the test enforces the *new* rule
-(strict-zero) rather than the current state. See
-``test_silent_except_baseline.py`` for the per-file count snapshot
-that this gate supersedes once the team is ready to require zero.
+``CHANGELOG.md`` under [1.5.0]. The strict-zero rule is now in force
+as of v1.5.6 — ``baseline = 0`` across ``src/ipracticom_sweeper/``.
+``tests/`` may still use ``except: pass`` for negative-path assertions
+(this gate intentionally excludes ``tests/``).
 """
 from __future__ import annotations
 

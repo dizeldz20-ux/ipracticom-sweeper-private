@@ -20,7 +20,14 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 - Removed `pytest.skip` and the `test_silent_except_baseline_snapshot` placeholder test.
 
 ### Cumulative since v1.5.0
-- **silent blocks = 0** across `src/ipracticom_sweeper/`. **99 cumulative silent blocks** replaced since v1.5.0 baseline of 50.
+- **silent blocks = 0** across `src/ipracticom_sweeper/`. **127 cumulative silent blocks** replaced since v1.5.0 baseline of 50:
+  - v1.5.0: 50 (baseline snapshot)
+  - v1.5.1: +8 → 42 remaining
+  - v1.5.2: +5 → 37 remaining
+  - v1.5.3: +5 → 32 remaining
+  - v1.5.4: +6 → 26 remaining
+  - v1.5.5: +13 → 13 remaining
+  - v1.5.6: +40 → 0 remaining
 
 ### Notes
 - No public API change.
