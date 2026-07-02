@@ -1106,6 +1106,203 @@ def create_app() -> Flask:
 
         return jsonify(bundle.to_dict())
 
+    # -----------------------------------------------------------------------
+    # v1.4.0 Slice 4 — Per-host config + module catalog routes
+    # -----------------------------------------------------------------------
+    #
+    # Surface the slice 1+2+3 work over HTTP for the dashboard.
+    # All routes are auth + rate-limit gated by the same wrappers as
+    # the rest of the agent API.
+    # -----------------------------------------------------------------------
+
+    def _host_config_to_dict(cfg) -> dict:
+        """Flatten a HostConfig into the JSON shape the dashboard expects."""
+        return {
+            "name": cfg.name,
+            "description": cfg.description,
+            "enabled": cfg.enabled,
+            "updated_at": cfg.updated_at,
+            "monitors": [
+                {"name": m.name, "enabled": m.enabled,
+                 "interval_sec": m.interval_sec, **m.settings}
+                for m in cfg.monitors
+            ],
+            "repairs": [
+                {"name": r.name, "enabled": r.enabled,
+                 "require_approval": r.require_approval, **r.settings}
+                for r in cfg.repairs
+            ],
+            "runbooks": [
+                {"name": rb.name, "enabled": rb.enabled, **rb.settings}
+                for rb in cfg.runbooks
+            ],
+            "suppressions": [
+                {"rule": s.rule, "until": s.until, "reason": s.reason}
+                for s in cfg.suppressions
+            ],
+        }
+
+    def _suppression_to_dict(s) -> dict:
+        return {"rule": s.rule, "until": s.until, "reason": s.reason}
+
+    def _module_info_to_dict(m) -> dict:
+        return {
+            "kind": m.kind,
+            "name": m.name,
+            "title_en": m.title_en,
+            "title_he": m.title_he,
+            "description": m.description,
+            "tags": list(m.tags),
+            "risk": m.risk,
+            "params": [
+                {"name": p.name, "type": p.type, "default": p.default}
+                for p in m.params
+            ],
+            "catalog_only": m.catalog_only,
+        }
+
+    # ---- /api/hosts ------------------------------------------------------
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_hosts_list():
+        from ipracticom_sweeper.config import host_config as _hc
+        out = []
+        for name in _hc.list_hosts():
+            try:
+                cfg = _hc.load_host(name)
+            except Exception:
+                continue
+            out.append(_host_config_to_dict(cfg))
+        return jsonify(out)
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_hosts_detail(name: str):
+        from ipracticom_sweeper.config import host_config as _hc
+        # _host_yaml_path raises ValueError on bad host names
+        try:
+            _hc._host_yaml_path(name)
+        except ValueError:
+            return jsonify({"error": "invalid_host", "name": name}), 400
+        try:
+            cfg = _hc.load_host(name)
+        except FileNotFoundError:
+            return jsonify({"error": "not_found", "name": name}), 404
+        # distinguish "unknown host" (file does not exist) from default
+        if not _hc._host_yaml_path(name).exists():
+            return jsonify({"error": "not_found", "name": name}), 404
+        return jsonify(_host_config_to_dict(cfg))
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_hosts_add_suppression(name: str):
+        from ipracticom_sweeper.config import host_config as _hc
+        try:
+            _hc._host_yaml_path(name)
+        except ValueError:
+            return jsonify({"error": "invalid_host", "name": name}), 400
+        body = request.get_json(silent=True) or {}
+        rule = (body.get("rule") or "").strip()
+        if not rule:
+            return jsonify({"error": "invalid_rule"}), 400
+        try:
+            entry = _hc.add_suppression(
+                name, rule,
+                until=body.get("until"),
+                reason=body.get("reason", ""),
+            )
+        except ValueError as e:
+            return jsonify({"error": "invalid", "detail": str(e)}), 400
+        return jsonify(_suppression_to_dict(entry)), 201
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_hosts_list_suppressions(name: str):
+        from ipracticom_sweeper.config import host_config as _hc
+        try:
+            _hc._host_yaml_path(name)
+        except ValueError:
+            return jsonify({"error": "invalid_host", "name": name}), 400
+        return jsonify([_suppression_to_dict(s)
+                        for s in _hc.list_active_suppressions(name)])
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_hosts_delete_suppression(name: str, rule: str):
+        from ipracticom_sweeper.config import host_config as _hc
+        try:
+            _hc._host_yaml_path(name)
+        except ValueError:
+            return jsonify({"error": "invalid_host", "name": name}), 400
+        if not _hc.remove_suppression(name, rule):
+            return jsonify({"error": "not_found"}), 404
+        return ("", 204)
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_hosts_cleanup_suppressions():
+        from ipracticom_sweeper.config import host_config as _hc
+        removed = _hc.cleanup_expired_suppressions()
+        return jsonify({"removed": removed})
+
+    app.add_url_rule("/api/hosts",
+                     view_func=api_hosts_list,
+                     methods=["GET"])
+    app.add_url_rule("/api/hosts/<name>",
+                     view_func=api_hosts_detail,
+                     methods=["GET"])
+    app.add_url_rule("/api/hosts/<name>/suppressions",
+                     view_func=api_hosts_add_suppression,
+                     methods=["POST"])
+    app.add_url_rule("/api/hosts/<name>/suppressions",
+                     view_func=api_hosts_list_suppressions,
+                     methods=["GET"])
+    app.add_url_rule("/api/hosts/<name>/suppressions/<rule>",
+                     view_func=api_hosts_delete_suppression,
+                     methods=["DELETE"])
+    app.add_url_rule("/api/hosts/_cleanup-suppressions",
+                     view_func=api_hosts_cleanup_suppressions,
+                     methods=["POST"])
+
+    # ---- /api/modules ----------------------------------------------------
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_modules_list():
+        from ipracticom_sweeper.config import module_registry as _mr
+        kind = request.args.get("kind")
+        risk = request.args.get("risk")
+        tag = request.args.get("tag")
+        available_only = request.args.get("available_only", "0") == "1"
+        try:
+            modules = _mr.discover_modules()
+            if kind or risk or tag or available_only:
+                modules = _mr.filter_modules(
+                    modules,
+                    kind=kind, risk=risk, tag=tag,
+                    available_only=available_only,
+                )
+        except ValueError as e:
+            return jsonify({"error": "invalid", "detail": str(e)}), 400
+        return jsonify([_module_info_to_dict(m) for m in modules])
+
+    @require_auth
+    @_rate_limit("api", _RL_API_DEFAULT)
+    def api_modules_detail(kind: str, name: str):
+        from ipracticom_sweeper.config import module_registry as _mr
+        m = _mr.get_module(name, kind=kind)
+        if m is None:
+            return jsonify({"error": "not_found", "kind": kind, "name": name}), 404
+        return jsonify(_module_info_to_dict(m))
+
+    app.add_url_rule("/api/modules",
+                     view_func=api_modules_list,
+                     methods=["GET"])
+    app.add_url_rule("/api/modules/<kind>/<name>",
+                     view_func=api_modules_detail,
+                     methods=["GET"])
+
     return app
 
 
