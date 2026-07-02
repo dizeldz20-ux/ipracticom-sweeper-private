@@ -2,6 +2,26 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.0] — 2026-07-02 — Silent-Except Gate (Slice 5.2)
+
+### Added
+- **Silent-except gate infrastructure** (`tests/test_silent_except_gate.py`):
+  - `test_50_5_no_silent_except_blocks_in_src` — strict-zero gate (skipped; target for v1.6.0)
+  - `test_50_5_silent_except_baseline_snapshot` — documents current count
+  - `test_50_5_per_file_baseline_does_not_regress` — anti-regression per file
+
+### Fixed
+- **Silent exception blocks** replaced with `log_suppressed()` calls so failures become auditable:
+  - `audit/rotation.py`: 8 → 0
+  - `monitor/freeswitch_v2_part2.py`: 5 → 0
+  - `dashboard.py`: 16 → 0
+  - `config/host_config.py`: 7 → 0 (new code in v1.3.0 slice 1)
+- **Total**: 36 silent blocks now auditable. Remaining: 35 in 22 files (deferred to v1.5.1+).
+
+### Notes
+- No public API change. No behavior change for callers that didn't depend on silent suppression.
+- v1.4.0 → v1.5.0 is a quality-of-observability release, not a feature release.
+
 ## [1.4.0] — 2026-07-02 — Suppression Engine & Dashboard API
 
 ### Added
