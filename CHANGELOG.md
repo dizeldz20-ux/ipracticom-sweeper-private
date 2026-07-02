@@ -2,6 +2,57 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.9] — 2026-07-02 — Hardening
+
+### Added
+- **CSRF Origin/Referer check** (`src/ipracticom_sweeper/dashboard.py`):
+  new `_csrf_origin_ok()` helper + `DASHBOARD_TRUSTED_ORIGINS` env var
+  (loopback always trusted). Applied via `before_request` to all
+  POST/PUT/PATCH/DELETE — protects dashboard state-changing routes
+  against cross-site form posts.
+- **`_safe_error_response` helper** (`agent_api.py` + `dashboard.py`):
+  centralizes error redaction (returns generic `internal_error` + 8-char
+  correlation id), logs the full exception server-side via `logger.error`,
+  and accepts an optional `extra=` kwarg so callers can preserve
+  non-sensitive metadata (e.g. `mode`, `remote_url`).
+- **`_validate_slack_webhook_url` allowlist** (`dashboard.py`):
+  Slack webhooks MUST be `https://hooks.slack.com/services/...` —
+  any other host/scheme/path is rejected before persistence
+  (`/settings` save) and before test send (`/settings/test`).
+- **`SLACK_ALLOWED_IPS` opt-in IP allowlist** for `/slack/events`
+  (`agent_api.py`): empty by default (HMAC still required); when set,
+  rejects requests from non-listed `remote_addr` with 403.
+- **CORS wildcard rejection at startup** (`agent_api.py`):
+  `AGENT_API_CORS_ORIGINS` must not contain `*` or `*/...` — raises
+  RuntimeError on import (fail-closed). Wildcards would leak the
+  Authorization header to any origin.
+- **`register_chat_routes(app, auth_required=True)`** (`chat.py`):
+  basic-auth `before_request` gate for all chat routes; WebSocket
+  `/ws` does explicit auth + `_ws_rate_limit_check()` (sliding-window
+  60 s, 30 msg/min, max 1024 tracked IPs).
+
+### Changed
+- **Rate-limits on 8 sensitive agent_api routes**:
+  `/api/run`, `/api/notify/test`, `/api/connectors` (POST/PATCH/DELETE
+  + `/test`), `/api/approvals/<pid>/approve|reject` — all gated by
+  the existing `@_rate_limit` decorator at `_RL_API_DEFAULT`.
+- **`_safe_error_response` replaces 10 raw `str(e)` patterns**
+  (6 in `agent_api.py`, 4 in `dashboard.py`) that previously exposed
+  filesystem paths, SQL fragments, and library versions to clients.
+
+### Fixed
+- **Silent rollback-fail handlers** (`config/host_config.py`):
+  `_invalidate_cache` and `_populate_cache` previously swallowed
+  `sqlite3.Error` from the inner `ROLLBACK` attempt with bare `pass`.
+  Now wrapped in `log_suppressed()` with `host` + original-exception
+  context so failures surface in the suppressed-exception log channel.
+
+### Verified
+- **13/13 new hardening tests pass** (`tests/test_v6_hardening.py`).
+- **44/44 cumulative tests pass** across all active sprints
+  (v1.5.7 security + v1.5.8 concurrency + v1.5.9 hardening
+  + silent_except_gate).
+
 ## [1.5.8] — 2026-07-02 — Concurrency Hotfix
 
 ### Fixed
