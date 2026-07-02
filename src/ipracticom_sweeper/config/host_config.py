@@ -272,6 +272,124 @@ def delete_host(name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Suppression engine (Slice 3)
+# ---------------------------------------------------------------------------
+#
+# CRUD on top of the per-host YAML files. The dataclass + the YAML
+# schema already exist (see ``Suppression`` and ``HostConfig.to_yaml_dict``);
+# these helpers give callers a stable API that does not require them
+# to know the storage layout.
+#
+# Audit
+# -----
+# add_suppression and remove_suppression emit one ``suppression.add`` /
+# ``suppression.remove`` audit event each via ``ipracticom_sweeper.audit.emit``.
+# cleanup_expired_suppressions does not (it is housekeeping, not a
+# decision the operator took).
+
+
+def _emit_audit(event: str, host: str, payload: dict) -> None:
+    """Lazy-import audit to avoid an import cycle."""
+    from ipracticom_sweeper.audit.logger import emit
+    emit(event, {"host": host, **payload})
+
+
+def add_suppression(
+    name: str,
+    rule: str,
+    *,
+    until: Optional[str] = None,
+    reason: str = "",
+) -> Suppression:
+    """Add (or replace) a suppression for ``(name, rule)``.
+
+    Auto-creates the host YAML if it does not yet exist. Re-adding
+    the same rule on the same host replaces the existing entry
+    (no duplicate entries stacked).
+
+    Returns the stored Suppression. ``name`` must pass the same
+    sanitization as ``save_host``; ``until`` must be ISO8601 or
+    ``None`` (permanent).
+    """
+    # _host_yaml_path raises ValueError on bad host names; calling it
+    # here gives us the same sanitization for free.
+    _host_yaml_path(name)
+    if not rule or not rule.strip():
+        raise ValueError("suppression rule must be a non-empty string")
+    cfg = load_host(name)
+    new_entry = Suppression(rule=rule, until=until, reason=reason)
+    replaced = False
+    for i, s in enumerate(cfg.suppressions):
+        if s.rule == rule:
+            cfg.suppressions[i] = new_entry
+            replaced = True
+            break
+    if not replaced:
+        cfg.suppressions.append(new_entry)
+    save_host(cfg)
+    _emit_audit("suppression.add", name, {
+        "rule": rule,
+        "until": until,
+        "reason": reason,
+        "replaced": replaced,
+    })
+    return new_entry
+
+
+def remove_suppression(name: str, rule: str) -> bool:
+    """Remove the suppression for ``(name, rule)``.
+
+    Idempotent: returns False if there is nothing to remove. Returns
+    True if an entry was actually deleted.
+    """
+    path = _host_yaml_path(name)  # raises on bad name
+    if not path.exists():
+        return False
+    cfg = load_host(name)
+    original_len = len(cfg.suppressions)
+    cfg.suppressions = [s for s in cfg.suppressions if s.rule != rule]
+    if len(cfg.suppressions) == original_len:
+        return False
+    save_host(cfg)
+    _emit_audit("suppression.remove", name, {"rule": rule})
+    return True
+
+
+def list_active_suppressions(name: str) -> list[Suppression]:
+    """All currently-active suppressions for ``host`` (expired are
+    filtered out automatically — they remain on disk until the next
+    ``cleanup_expired_suppressions`` pass).
+
+    Returns an empty list for unknown hosts.
+    """
+    try:
+        cfg = load_host(name)
+    except ValueError:
+        return []
+    return [s for s in cfg.suppressions if s.is_active()]
+
+
+def cleanup_expired_suppressions() -> int:
+    """Scan every host YAML, drop expired suppressions from each,
+    rewrite the file. Returns the total number of entries removed.
+
+    Hosts with no expired suppressions are NOT rewritten (mtime is
+    preserved for the audit trail).
+    """
+    removed_total = 0
+    for host_name in list_hosts():
+        cfg = load_host(host_name)
+        active = [s for s in cfg.suppressions if s.is_active()]
+        dropped = len(cfg.suppressions) - len(active)
+        if dropped == 0:
+            continue
+        cfg.suppressions = active
+        save_host(cfg)
+        removed_total += dropped
+    return removed_total
+
+
+# ---------------------------------------------------------------------------
 # SQLite read-cache
 # ---------------------------------------------------------------------------
 
