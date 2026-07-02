@@ -32,6 +32,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .._log import log_suppressed
 from typing import Any, Optional
 
 
@@ -211,7 +213,8 @@ def reap_expired(
     for v2_path in pending_dir.glob("*.v2.json"):
         try:
             data = json.loads(v2_path.read_text())
-        except Exception:
+        except Exception as e:
+            log_suppressed("approvals_v2_v2_read", e)
             continue
         exp_ts = float(data.get("expires_at_ts") or 0)
         pid = data.get("pid")
@@ -228,7 +231,8 @@ def reap_expired(
                         json.dumps(pdata, indent=2, ensure_ascii=False)
                     )
                     pending_proposal.unlink()
-                except Exception:
+                except Exception as e:
+                    log_suppressed("approvals_v2_reap_proposal", e)
                     continue
             # Drop the v2 sidecar too
             v2_path.unlink(missing_ok=True)
@@ -262,7 +266,8 @@ def export_audit_csv(
                 continue
             try:
                 entry = json.loads(line)
-            except Exception:
+            except Exception as e:
+                log_suppressed("approvals_v2_audit_parse", e)
                 continue
             ts_str = entry.get("logged_at") or entry.get("timestamp") or ""
             ts = _parse_iso(ts_str)
@@ -286,7 +291,8 @@ def export_audit_csv(
         for fp in rdir.glob("*.json"):
             try:
                 data = json.loads(fp.read_text())
-            except Exception:
+            except Exception as e:
+                log_suppressed("approvals_v2_rejected_read", e)
                 continue
             ts = float(data.get("created_at_ts") or 0)
             if since_ts and ts < since_ts:

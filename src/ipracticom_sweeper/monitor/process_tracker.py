@@ -138,7 +138,8 @@ def _scan_processes() -> list[dict]:
                 "mem_percent": round(mem_pct, 2),
                 "runtime_seconds": max(runtime_seconds, 0),
             })
-        except (OSError, ValueError, IndexError):
+        except (OSError, ValueError, IndexError) as e:
+            log_suppressed("process_tracker_proc_read", e)
             continue
     return procs
 

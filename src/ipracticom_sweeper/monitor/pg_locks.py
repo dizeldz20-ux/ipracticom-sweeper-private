@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 @dataclass
 class BlockedQuery:
@@ -58,7 +60,8 @@ def _parse_blocked(stdout: str) -> list[BlockedQuery]:
             wait_event = parts[3] or ""
             duration = float(parts[4])
             query = parts[5][:200]
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("pg_locks_parse", e)
             continue
         if wait_type.lower() != "lock":
             continue

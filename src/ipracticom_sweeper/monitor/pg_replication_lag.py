@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 @dataclass
 class ReplicaLag:
@@ -49,7 +51,8 @@ def _parse_replicas(stdout: str) -> list[ReplicaLag]:
             addr = parts[0] or "(unknown)"
             state = parts[1] or "unknown"
             lag = float(parts[2])
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("pg_replication_lag_parse", e)
             continue
         if lag < 0:
             lag = 0.0  # streaming: replay_lag is NULL → COALESCE(..., 0)

@@ -1,22 +1,18 @@
 """Logging helpers — soften the boilerplate of "log + continue" patterns.
 
-Replaces the long-standing pattern::
+Replaces the long-standing pattern of swallowing an exception with
+a single ``log_suppressed(context, exc)`` call so silent failures
+leave a structured line in the journal instead of vanishing.
 
-    try:
-        risky()
-    except Exception:
-        pass
+Callers MUST NOT use this for failures that should propagate —
+wrap in ``raise`` for those.
 
-with::
+Example::
 
     try:
         risky()
     except Exception as exc:
         log_suppressed("module.thing", exc)
-
-so silent failures leave a single structured line in the journal
-instead of vanishing into the void. Callers MUST NOT use this for
-failures that should propagate — wrap in ``raise`` for those.
 """
 from __future__ import annotations
 

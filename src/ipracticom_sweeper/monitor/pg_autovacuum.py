@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 @dataclass
 class TableVacuumLag:
@@ -52,7 +54,8 @@ def _parse_autovacuum(stdout: str) -> list[TableVacuumLag]:
             relname = parts[1]
             seconds = float(parts[2])
             never = parts[3].lower().startswith("t")
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("pg_autovacuum_parse", e)
             continue
         out.append(TableVacuumLag(
             schemaname=schema, relname=relname,

@@ -105,7 +105,8 @@ def load_all() -> list[Connector]:
             continue
         try:
             out.append(Connector.from_dict(entry))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            log_suppressed("connectors_from_dict", e)
             continue
     return out
 

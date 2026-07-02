@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._log import log_suppressed
+
 
 def _read_proc(path: str) -> str:
     try:
@@ -60,7 +62,8 @@ def get_tcp_states() -> dict[str, int]:
         try:
             state_hex = parts[3]
             state_int = int(state_hex, 16)
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("network_tcp_state_parse", e)
             continue
         states[state_int] = states.get(state_int, 0) + 1
 

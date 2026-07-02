@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any
 import os
 
+from .._log import log_suppressed
+
 
 @dataclass
 class FdSystemStats:
@@ -75,7 +77,8 @@ def collect_top_fd_processes(top_n: int = 5) -> list[dict]:
         fd_dir = f"/proc/{pid}/fd"
         try:
             names = os.listdir(fd_dir)
-        except (OSError, PermissionError):
+        except (OSError, PermissionError) as e:
+            log_suppressed("fd_check_proc_read", e)
             continue
         if not names:
             continue

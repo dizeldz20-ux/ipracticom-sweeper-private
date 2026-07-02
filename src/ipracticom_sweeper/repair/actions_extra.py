@@ -74,7 +74,8 @@ def repair_rotate_nginx_logs(
         for old in log_p.parent.glob(f"{log_p.name}.*"):
             try:
                 idx = int(old.suffix.lstrip(".").split(".")[-1])
-            except (ValueError, IndexError):
+            except (ValueError, IndexError) as e:
+                log_suppressed("actions_extra_rotation_parse", e)
                 continue
             if idx > keep_rotations:
                 old.unlink()

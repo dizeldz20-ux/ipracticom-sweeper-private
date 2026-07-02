@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from ._log import log_suppressed
+
 # Hebrew block: U+05D0..U+05EA (letters). Combined with general letters/digits.
 _HEBREW_LETTERS = "\u05d0-\u05ea"
 # Niqqud / cantillation marks to strip.
@@ -385,7 +387,8 @@ def load_docs_from_dir(directory: str | Path,
             break
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except OSError as e:
+            log_suppressed("chat_rag_read_doc", e)
             continue
         text = text[:max_chars]
         doc_id = str(path.relative_to(p))

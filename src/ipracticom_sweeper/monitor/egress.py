@@ -12,6 +12,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 # State-line pattern in `ss -tn`:
 # State  Recv-Q  Send-Q   Local Address:Port   Peer Address:Port
@@ -58,12 +60,14 @@ def parse_ss_output(stdout: str) -> list[EgressConnection]:
         host = host.strip("[]")
         try:
             port = int(port_str)
-        except ValueError:
+        except ValueError as e:
+            log_suppressed("egress_parse_port", e)
             continue
         # Only IPv4 for now (simple; IPv6 can be added later)
         try:
             ipaddress.IPv4Address(host)
-        except (ipaddress.AddressValueError, ValueError):
+        except (ipaddress.AddressValueError, ValueError) as e:
+            log_suppressed("egress_parse_ip", e)
             continue
         out.append(EgressConnection(state=state, local=m.group("local"),
                                     remote_ip=host, remote_port=port))
@@ -79,7 +83,8 @@ def _ip_in_cidrs(ip: str, cidrs: list[str]) -> bool:
         try:
             if addr in ipaddress.IPv4Network(cidr, strict=False):
                 return True
-        except (ipaddress.AddressValueError, ValueError):
+        except (ipaddress.AddressValueError, ValueError) as e:
+            log_suppressed("egress_cidr_parse", e)
             continue
     return False
 

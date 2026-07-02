@@ -38,7 +38,8 @@ def _run_df(flag: str = "") -> list[dict[str, Any]]:
             size_kb = int(size)
             used_kb = int(used)
             avail_kb = int(avail)
-        except ValueError:
+        except ValueError as e:
+            log_suppressed("disk_df_parse", e)
             continue
         results.append({
             "filesystem": filesystem,

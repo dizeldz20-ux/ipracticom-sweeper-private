@@ -318,7 +318,8 @@ def create_app() -> Flask:
                 continue
             try:
                 size = path.stat().st_size
-            except OSError:
+            except OSError as e:
+                log_suppressed("agent_api_audit_size", e)
                 continue
 
             tail: list[Any] = []
@@ -1076,7 +1077,8 @@ def create_app() -> Flask:
                             ts = entry.get("ts") or 0
                             if ts >= cutoff:
                                 audit_entries.append(entry)
-                        except _json.JSONDecodeError:
+                        except _json.JSONDecodeError as e:
+                            log_suppressed("agent_api_audit_parse", e)
                             continue
             except (OSError, PermissionError) as e:
                 log_suppressed("agent_api_audit_read", e)
@@ -1172,7 +1174,8 @@ def create_app() -> Flask:
         for name in _hc.list_hosts():
             try:
                 cfg = _hc.load_host(name)
-            except Exception:
+            except Exception as e:
+                log_suppressed("agent_api_host_load", e)
                 continue
             out.append(_host_config_to_dict(cfg))
         return jsonify(out)

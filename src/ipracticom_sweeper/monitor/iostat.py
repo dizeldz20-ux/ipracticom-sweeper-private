@@ -12,6 +12,8 @@ from typing import Any
 import shutil
 import subprocess
 
+from .._log import log_suppressed
+
 
 @dataclass
 class IostatDevice:
@@ -104,7 +106,8 @@ def parse_iostat_output(output: str) -> list[IostatDevice]:
             r_await = float(parts[idx_r_await])
             w_await = float(parts[idx_w_await])
             util = float(parts[idx_util])
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("iostat_parse", e)
             continue
 
         # Filter out zero-activity devices

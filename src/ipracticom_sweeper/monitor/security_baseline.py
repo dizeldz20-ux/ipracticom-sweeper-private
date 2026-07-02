@@ -13,6 +13,8 @@ import os
 import re
 import subprocess
 
+from .._log import log_suppressed
+
 
 SSH_PATHS = ["/etc/ssh/sshd_config", "/private/etc/ssh/sshd_config"]
 SUID_DIRS = ["/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin", "/bin", "/sbin"]
@@ -48,7 +50,8 @@ def collect_sshd_config() -> dict[str, Any]:
                         "path": path,
                         "config": parse_sshd_config(f.read()),
                     }
-            except (OSError, PermissionError):
+            except (OSError, PermissionError) as e:
+                log_suppressed("security_baseline_sshd_read", e)
                 continue
     return {"available": False, "path": None, "config": {}}
 
@@ -84,9 +87,11 @@ def scan_suid_binaries() -> list[dict[str, str]]:
                             "owner": owner,
                             "group": group,
                         })
-                except (OSError, PermissionError):
+                except (OSError, PermissionError) as e:
+                    log_suppressed("security_baseline_suid_stat", e)
                     continue
-        except (OSError, PermissionError):
+        except (OSError, PermissionError) as e:
+            log_suppressed("security_baseline_suid_walk", e)
             continue
     return suid_files
 
@@ -110,7 +115,8 @@ def collect_listening_ports() -> list[dict[str, Any]]:
                             "raw": line.strip()[:200],
                         })
                 return ports
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            log_suppressed("security_baseline_listening_ports", e)
             continue
     return []
 

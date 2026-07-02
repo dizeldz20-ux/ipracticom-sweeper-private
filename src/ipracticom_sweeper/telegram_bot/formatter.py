@@ -125,7 +125,8 @@ def format_history(metric: str, samples: list[dict]) -> str:
             v = s.get("value")
             when = datetime.fromtimestamp(ts).strftime("%H:%M")
             ts_lines.append(f"  • {when} → {v}")
-        except (TypeError, ValueError, OSError):
+        except (TypeError, ValueError, OSError) as e:
+            log_suppressed("formatter_history_line", e)
             continue
     if ts_lines:
         lines.append("")

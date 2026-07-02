@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from .._log import log_suppressed
+
 
 def _read_proc_stat() -> list[dict[str, Any]]:
     """Read all /proc/[pid]/stat files. Returns basic info per process."""
@@ -35,7 +37,8 @@ def _read_proc_stat() -> list[dict[str, Any]]:
                 "stime_jiffies": stime,
                 "starttime_jiffies": starttime,
             })
-        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError):
+        except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError) as e:
+            log_suppressed("processes_proc_stat", e)
             continue
 
     return results

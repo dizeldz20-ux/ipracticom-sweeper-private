@@ -969,7 +969,8 @@ def check_fs17_recordings_age(
                 full = os.path.join(root, name)
                 try:
                     mtime = os.path.getmtime(full)
-                except OSError:
+                except OSError as e:
+                    log_suppressed("freeswitch_mtime_scan", e)
                     continue
                 samples.append(mtime)
                 if len(samples) >= 100:
@@ -1062,7 +1063,8 @@ def check_fs19_sofia_jitter(jitter_warn_ms: int = 30, jitter_crit_ms: int = 100)
             tok = tok.strip("ms,()")
             try:
                 val = float(tok)
-            except ValueError:
+            except ValueError as e:
+                log_suppressed("freeswitch_jitter_parse", e)
                 continue
             if val > max_jitter:
                 max_jitter = val
@@ -1153,7 +1155,8 @@ def check_fs21_process_rss(
     for proc in psutil.process_iter(attrs=["name", "memory_info"]):
         try:
             name = proc.info.get("name") or ""
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            log_suppressed("freeswitch_mem_iter", e)
             continue
         if name != "freeswitch":
             continue
@@ -1214,14 +1217,16 @@ def check_fs22_process_cpu_pct(
     for proc in psutil.process_iter(attrs=["name"]):
         try:
             name = proc.info.get("name") or ""
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            log_suppressed("freeswitch_cpu_iter", e)
             continue
         if name != "freeswitch":
             continue
         try:
             total += proc.cpu_percent(interval=sample_seconds)
             seen += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            log_suppressed("freeswitch_cpu_sample", e)
             continue
     if seen == 0:
         return {

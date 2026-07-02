@@ -13,6 +13,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 @dataclass
 class LongQuery:
@@ -70,7 +72,8 @@ def _parse_long_queries(stdout: str, warn_threshold_s: float) -> list[LongQuery]
             # parts[4] = EXTRACT(EPOCH FROM (now()-state_change))
             duration = float(parts[4])
             usename = parts[5] if len(parts) >= 6 else ""
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("pg_long_query_parse", e)
             continue
         if duration >= warn_threshold_s and state != "idle":
             out.append(LongQuery(

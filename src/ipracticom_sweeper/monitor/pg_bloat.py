@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 @dataclass
 class TableBloat:
@@ -52,7 +54,8 @@ def _parse_bloat(stdout: str) -> list[TableBloat]:
             relname = parts[1]
             live = int(parts[2])
             dead = int(parts[3])
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
+            log_suppressed("pg_bloat_parse", e)
             continue
         total = live + dead
         ratio = (dead / total) if total > 0 else 0.0

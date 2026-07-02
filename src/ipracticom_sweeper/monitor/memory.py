@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .._log import log_suppressed
+
 
 def _read_meminfo() -> dict[str, int]:
     """Parse /proc/meminfo into a {key: kB} dict."""
@@ -17,7 +19,8 @@ def _read_meminfo() -> dict[str, int]:
                 value = value[:-3]
             try:
                 info[key.strip()] = int(value)
-            except ValueError:
+            except ValueError as e:
+                log_suppressed("memory_meminfo_parse", e)
                 continue
     return info
 

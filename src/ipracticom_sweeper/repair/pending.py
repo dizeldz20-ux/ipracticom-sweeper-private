@@ -24,6 +24,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .._log import log_suppressed
 from typing import Any
 
 # Paths are configurable so tests can sandbox into a tmp dir without
@@ -104,7 +106,8 @@ def list_pending() -> list[RepairProposal]:
         try:
             data = json.loads(p.read_text())
             out.append(RepairProposal(**data))
-        except Exception:
+        except Exception as e:
+            log_suppressed("pending_list_read", e)
             continue
     out.sort(key=lambda x: x.created_at_ts, reverse=True)
     return out
@@ -121,7 +124,8 @@ def get_proposal(pid: str) -> RepairProposal | None:
         if path.exists():
             try:
                 return RepairProposal(**json.loads(path.read_text()))
-            except Exception:
+            except Exception as e:
+                log_suppressed("pending_get_proposal", e)
                 continue
     return None
 

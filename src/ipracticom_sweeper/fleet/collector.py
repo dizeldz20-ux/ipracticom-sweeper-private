@@ -38,6 +38,8 @@ import threading
 import time
 from pathlib import Path
 
+from .._log import log_suppressed
+
 from ipracticom_sweeper.config import (
     load_connectors,
     mark_connector_collected,
@@ -92,7 +94,8 @@ def load_all_snapshots() -> list[dict]:
     for f in sorted(d.glob("*.json")):
         try:
             out.append(json.loads(f.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            log_suppressed("fleet_snapshot_read", e)
             continue
     return out
 

@@ -4,6 +4,8 @@ import os
 import time
 from dataclasses import dataclass
 
+from .._log import log_suppressed
+
 
 @dataclass
 class TokenInfo:
@@ -27,7 +29,8 @@ def load_token(prefix: str = "AGENT_TOKEN_") -> TokenInfo | None:
         date_str = key[len(prefix):]
         try:
             expires_at = time.mktime(time.strptime(date_str, "%Y%m%d")) + 86400  # end of day
-        except ValueError:
+        except ValueError as e:
+            log_suppressed("secrets_parse_date", e)
             continue
         if value and expires_at > now:
             days = (expires_at - now) / 86400
