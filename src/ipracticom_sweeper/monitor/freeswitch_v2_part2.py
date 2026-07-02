@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from ipracticom_sweeper._log import log_suppressed
+
 from ipracticom_sweeper.monitor.freeswitch import (
     _run,
     _run_fscli,
@@ -253,8 +255,9 @@ def _parse_show_calls_latencies(stdout: str) -> list[int]:
     for m in pattern.finditer(stdout):
         try:
             latencies.append(int(m.group(1)))
-        except ValueError:
-            pass
+        except ValueError as exc:
+            log_suppressed("monitor.fs.parse_dialplan_time", exc,
+                           extras={"match": m.group(0)[:80]})
     return latencies
 
 
@@ -330,8 +333,9 @@ def _parse_conference_list(stdout: str) -> dict[str, int]:
     for m in pattern.finditer(stdout):
         try:
             confs[m.group(1)] = int(m.group(2))
-        except ValueError:
-            pass
+        except ValueError as exc:
+            log_suppressed("monitor.fs.parse_conf_members", exc,
+                           extras={"match": m.group(0)[:80]})
     return confs
 
 
@@ -387,8 +391,9 @@ def _get_voicemail_quota(fs_xml: Path) -> int:
         m = re.search(r'<param\s+name="quota"\s+value="(\d+)"', text)
         if m:
             return int(m.group(1))
-    except OSError:
-        pass
+    except OSError as exc:
+        log_suppressed("monitor.fs.read_quota", exc,
+                       extras={"path": str(fs_xml)})
     return 0
 
 
@@ -419,10 +424,12 @@ def check_fs34_voicemail_quota(
             if p.is_file():
                 try:
                     used_bytes += p.stat().st_size
-                except OSError:
-                    pass
-    except OSError:
-        pass
+                except OSError as exc:
+                    log_suppressed("monitor.fs.dir_size_stat", exc,
+                                   extras={"path": str(p)})
+    except OSError as exc:
+        log_suppressed("monitor.fs.dir_size_rglob", exc,
+                       extras={"dir": str(dir_path)})
 
     if quota_bytes == 0:
         # Treat as unlimited

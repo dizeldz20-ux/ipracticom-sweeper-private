@@ -39,6 +39,7 @@ from flask import Flask, abort, jsonify, redirect, render_template, request, url
 
 from ipracticom_sweeper.agent_client import AgentClient, AgentError
 from ipracticom_sweeper.spa_context import shape_spa_context
+from ipracticom_sweeper._log import log_suppressed
 from ipracticom_sweeper.config import (
     Connector,
     get_server_id,
@@ -119,8 +120,8 @@ def _require_basic_auth():
             user, _, pwd = decoded.partition(":")
             if hmac.compare_digest(user, _DASHBOARD_USER) and hmac.compare_digest(pwd, _DASHBOARD_PASS):
                 return None
-        except Exception:
-            pass
+        except Exception as exc:
+            log_suppressed("dashboard.basic_auth_decode", exc)
     resp = jsonify({"error": "unauthorized", "reason": "missing or invalid Basic credentials"})
     resp.status_code = 401
     resp.headers["WWW-Authenticate"] = 'Basic realm="sweeper-dashboard"'
@@ -311,8 +312,8 @@ def _fetch_v6_stats() -> dict:
                 rep_failed = snap.get("repairs_failed", 0)
                 try:
                     stats["critical_count"] = int(problems) + int(rep_failed)
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as exc:
+                    log_suppressed("dashboard.stats.critical_count", exc)
             d = snap.get("defcon")
             if isinstance(d, int):
                 stats["defcon"] = d
@@ -940,14 +941,16 @@ def v6_metrics_events_heatmap():
                     continue
                 try:
                     ev = _json.loads(line)
-                except _json.JSONDecodeError:
+                except _json.JSONDecodeError as exc:
+                    log_suppressed("dashboard.events_heatmap.json_decode", exc)
                     continue
                 ts_str = ev.get("ts", "")
                 if not ts_str:
                     continue
                 try:
                     ev_dt = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
-                except ValueError:
+                except ValueError as exc:
+                    log_suppressed("dashboard.events_heatmap.iso_parse", exc)
                     continue
                 if ev_dt.tzinfo is None:
                     ev_dt = ev_dt.replace(tzinfo=timezone.utc)
@@ -990,14 +993,16 @@ def v6_metrics_uptime_30d():
                     continue
                 try:
                     ev = _json.loads(line)
-                except _json.JSONDecodeError:
+                except _json.JSONDecodeError as exc:
+                    log_suppressed("dashboard.uptime_30d.json_decode", exc)
                     continue
                 ts_str = ev.get("ts", "")
                 if not ts_str:
                     continue
                 try:
                     ev_dt = _dt.fromisoformat(ts_str.replace("Z", "+00:00"))
-                except ValueError:
+                except ValueError as exc:
+                    log_suppressed("dashboard.uptime_30d.iso_parse", exc)
                     continue
                 if ev_dt.tzinfo is None:
                     ev_dt = ev_dt.replace(tzinfo=timezone.utc)
@@ -1065,7 +1070,8 @@ def _pick_v6_log_target() -> Path | None:
         try:
             if path.exists() and path.is_file():
                 return path
-        except OSError:
+        except OSError as exc:
+            log_suppressed("dashboard.pick_v6_log_target.stat", exc)
             continue
     return None
 
@@ -1358,10 +1364,11 @@ def _load_history_runs() -> list[dict]:
                     "module": ev.get("module", ""),
                     "status": ev.get("status", ""),
                 })
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                log_suppressed("dashboard.history_runs.json_decode", exc)
                 continue
-    except OSError:
-        pass
+    except OSError as exc:
+        log_suppressed("dashboard.history_runs.read", exc)
     return runs
 
 
@@ -1385,7 +1392,8 @@ def _load_history_repairs() -> list[dict]:
                 continue
             try:
                 ev = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                log_suppressed("dashboard.history_repairs.json_decode", exc)
                 continue
             out.append({
                 "ts": ev.get("logged_at", ""),
@@ -1400,8 +1408,8 @@ def _load_history_repairs() -> list[dict]:
                 "error": ev.get("error", ""),
                 "reason": ev.get("reason", ""),
             })
-    except OSError:
-        pass
+    except OSError as exc:
+        log_suppressed("dashboard.history_repairs.read", exc)
     out.sort(key=lambda x: x.get("ts") or "", reverse=True)
     return out
 
@@ -1423,7 +1431,9 @@ def _load_history_proposals() -> list[dict]:
             for p in subdir.glob("*.json"):
                 try:
                     data = json.loads(p.read_text())
-                except (json.JSONDecodeError, OSError):
+                except (json.JSONDecodeError, OSError) as exc:
+                    log_suppressed("dashboard.history_proposals.parse", exc,
+                                   extras={"path": str(p)})
                     continue
                 out.append({
                     "id": data.get("id", p.stem),
@@ -1433,8 +1443,8 @@ def _load_history_proposals() -> list[dict]:
                     "created_at": data.get("created_at", ""),
                     "status": data.get("status", status),
                 })
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("dashboard.history_proposals.load", exc)
     out.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return out
 
@@ -1595,15 +1605,16 @@ def fleet_host_detail(name: str):
                     continue
                 try:
                     entry = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    log_suppressed("dashboard.fleet_host_detail.repairs_json_decode", exc)
                     continue
                 # Match if name appears in any field (best-effort for SSM hosts
                 # where the host field might equal instance_id)
                 if name in json.dumps(entry) or conn.instance_id in json.dumps(entry):
                     repairs.append(entry)
         repairs = repairs[-50:]
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as exc:
+        log_suppressed("dashboard.fleet_host_detail.repairs_read", exc)
 
     # Pending approvals
     pending = []
@@ -1612,8 +1623,8 @@ def fleet_host_detail(name: str):
         for p in pending_mod.list_pending():
             if name in str(p) or conn.instance_id in str(p):
                 pending.append(p)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("dashboard.fleet_host_detail.pending_list", exc)
 
     return jsonify({
         "name": name,

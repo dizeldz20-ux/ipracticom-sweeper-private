@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Optional, TextIO
 
+from ipracticom_sweeper._log import log_suppressed
+
 MAX_BYTES = 100 * 1024 * 1024      # 100 MB
 MAX_ROTATIONS = 5                   # keep .1..5
 MAX_AGE_DAYS = 30
@@ -63,8 +65,8 @@ class WriterHandle:
                 if self._fh.tell() > MAX_BYTES:
                     self._rotate_locked()
                     self._reopen_locked()
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                log_suppressed("audit.rotation.write_check_size", exc)
             return n
 
     def _reopen_locked(self) -> None:
@@ -72,8 +74,8 @@ class WriterHandle:
         if self._fh is not None:
             try:
                 self._fh.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                log_suppressed("audit.rotation.reopen_close", exc)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self.path.open("a", buffering=io.DEFAULT_BUFFER_SIZE)
         try:
@@ -87,8 +89,8 @@ class WriterHandle:
             if self._fh is not None:
                 try:
                     self._fh.close()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log_suppressed("audit.rotation.close", exc)
                 self._fh = None
 
     def _rotate_locked(self) -> None:
@@ -96,8 +98,8 @@ class WriterHandle:
         if self._fh is not None:
             try:
                 self._fh.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                log_suppressed("audit.rotation.rotate_close", exc)
             self._fh = None
         audit_dir = self.path.parent
         _cascade_rotate_locked(audit_dir)
@@ -133,8 +135,9 @@ def audit_rotate(state_dir: Path) -> int:
                 if n > MAX_ROTATIONS:
                     f.unlink()
                     pruned += 1
-            except (ValueError, OSError):
-                pass
+            except (ValueError, OSError) as exc:
+                log_suppressed("audit.rotation.audit_rotate_parse_suffix", exc,
+                               extras={"path": f.name})
         return cascade + pruned
 
 
@@ -170,8 +173,9 @@ def _cascade_rotate_locked(audit_dir: Path) -> int:
             n = int(suffix)
             if n > MAX_ROTATIONS:
                 f.unlink()
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as exc:
+            log_suppressed("audit.rotation.cascade_parse_suffix", exc,
+                           extras={"path": f.name})
 
     # Cascade: .N → .N+1, with gzip at .1
     for i in range(MAX_ROTATIONS, 0, -1):
@@ -190,8 +194,9 @@ def _cascade_rotate_locked(audit_dir: Path) -> int:
                 if i == 1:
                     older.unlink()
                     (audit_dir / "audit.jsonl").open("a").close()
-            except OSError:
-                pass
+            except OSError as exc:
+                log_suppressed("audit.rotation.cascade_rename", exc,
+                               extras={"index": i})
         elif older.exists() and target.exists():
             # Target exists (e.g. MAX_ROTATIONS+1 leftover that wasn't pruned
             # because we only iterate up to MAX_ROTATIONS). Skip — already pruned.
@@ -209,6 +214,7 @@ def _prune_old_locked(audit_dir: Path, max_age_days: int = MAX_AGE_DAYS) -> int:
             if f.stat().st_mtime < cutoff:
                 f.unlink()
                 removed += 1
-        except OSError:
-            pass
+        except OSError as exc:
+            log_suppressed("audit.rotation.prune_old", exc,
+                           extras={"path": f.name})
     return removed

@@ -40,6 +40,7 @@ from typing import Any, Optional
 import yaml
 
 from ipracticom_sweeper.config.paths import ROOT
+from ipracticom_sweeper._log import log_suppressed
 
 
 # ---------------------------------------------------------------------------
@@ -245,10 +246,9 @@ def save_host(cfg: HostConfig) -> Path:
     _invalidate_cache(cfg.name)
     try:
         _populate_cache(cfg)
-    except sqlite3.Error:
-        # Cache repopulation failure is non-fatal; the next get_host
-        # will fall back to YAML and repopulate.
-        pass
+    except sqlite3.Error as exc:
+        log_suppressed("host_config.save_host.populate_cache", exc,
+                       extras={"host": cfg.name})
     return path
 
 
@@ -364,7 +364,9 @@ def list_active_suppressions(name: str) -> list[Suppression]:
     """
     try:
         cfg = load_host(name)
-    except ValueError:
+    except ValueError as exc:
+        log_suppressed("host_config.list_active_suppressions", exc,
+                       extras={"host": name})
         return []
     return [s for s in cfg.suppressions if s.is_active()]
 
@@ -467,8 +469,9 @@ def _invalidate_cache(name: str) -> None:
             for table in ("host_monitors", "host_repairs",
                           "host_runbooks", "host_suppressions", "hosts"):
                 conn.execute(f"DELETE FROM {table} WHERE host = ?", (name,))
-        except sqlite3.Error:
-            pass  # cache invalidation failure is non-fatal
+        except sqlite3.Error as exc:
+            log_suppressed("host_config._invalidate_cache.delete", exc,
+                           extras={"host": name})
 
 
 def _populate_cache(cfg: HostConfig) -> None:
@@ -557,7 +560,9 @@ def _cache_get(name: str) -> Optional[HostConfig]:
                     rule=r[0], until=r[1], reason=r[2] or "",
                 ))
             return cfg
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
+            log_suppressed("host_config._load_from_cache", exc,
+                           extras={"host": name})
             return None
 
 
@@ -569,8 +574,9 @@ def get_host(name: str) -> HostConfig:
     cfg = load_host(name)
     try:
         _populate_cache(cfg)
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as exc:
+        log_suppressed("host_config.get_host.populate_cache", exc,
+                       extras={"host": name})
     return cfg
 
 
@@ -584,8 +590,8 @@ def list_all_hosts() -> list[HostConfig]:
             conn = _db_conn()
             for r in conn.execute("SELECT name FROM hosts ORDER BY name"):
                 seen.add(r[0])
-        except sqlite3.Error:
-            pass
+        except sqlite3.Error as exc:
+            log_suppressed("host_config.list_all_hosts.cache_read", exc)
     # Always reconcile with the YAML directory (in case YAML changed
     # without invalidating the cache, or a new file landed)
     for name in list_hosts():
@@ -595,8 +601,9 @@ def list_all_hosts() -> list[HostConfig]:
             cfg = load_host(name)
             try:
                 _populate_cache(cfg)
-            except sqlite3.Error:
-                pass
+            except sqlite3.Error as exc:
+                log_suppressed("host_config.list_all_hosts.populate_cache", exc,
+                               extras={"host": name})
             out.append(cfg)
     return out
 
