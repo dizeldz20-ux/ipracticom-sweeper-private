@@ -31,6 +31,8 @@ from typing import Any
 
 import yaml
 
+from .._log import log_suppressed
+
 
 # --- Schema --------------------------------------------------------------
 
@@ -177,14 +179,14 @@ def mark_collected(name: str, ts: float | None = None) -> None:
     """Record a successful SSM collection. Used by the collector loop."""
     try:
         update(name, last_collected_at=ts or time.time(), last_error=None)
-    except KeyError:
+    except KeyError as e:
         # Connector was deleted while we were collecting — race is benign.
-        pass
+        log_suppressed("connectors_mark_collected", e)
 
 
 def mark_error(name: str, error: str) -> None:
     """Record a failed SSM collection (e.g. timeout, no IAM role on remote)."""
     try:
         update(name, last_error=error[:500])  # cap to keep YAML readable
-    except KeyError:
-        pass
+    except KeyError as e:
+        log_suppressed("connectors_mark_error", e)

@@ -59,6 +59,7 @@ from ipracticom_sweeper.dashboard import (
 from ipracticom_sweeper.pipeline import run_pipeline
 from ipracticom_sweeper.slack_actions.endpoint import SlackEndpoint
 from ipracticom_sweeper.slack_actions.commands import SlackCommandHandler
+from ipracticom_sweeper._log import log_suppressed
 
 
 def _read_heartbeat(state_dir) -> dict[str, Any] | None:
@@ -192,8 +193,8 @@ def create_app() -> Flask:
                 try:
                     if hasattr(resp, "headers"):
                         resp.headers["X-RateLimit-Remaining"] = str(remaining)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log_suppressed("agent_api_rate_limit_header", e)
                 return resp
             return wrapper
         return deco
@@ -1077,8 +1078,8 @@ def create_app() -> Flask:
                                 audit_entries.append(entry)
                         except _json.JSONDecodeError:
                             continue
-            except (OSError, PermissionError):
-                pass
+            except (OSError, PermissionError) as e:
+                log_suppressed("agent_api_audit_read", e)
 
         # Build bundle (repairs list will be inside audit_entries, filtered below)
         repair_entries = [e for e in audit_entries if e.get("kind") == "repair_executed"]

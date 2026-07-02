@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ._log import log_suppressed
+
 try:
     from flask import Blueprint, jsonify, render_template, request
     from flask_sock import Sock
@@ -67,8 +69,8 @@ class RAGStore:
             candidate = here.parent.parent / "docs"
             if candidate.is_dir():
                 return str(candidate)
-        except Exception:
-            pass
+        except Exception as e:
+            log_suppressed("chat_docs_resolve", e)
         return None
 
     def reload(self) -> int:
@@ -353,8 +355,8 @@ def register_chat_routes(app: Any) -> None:
         except Exception as exc:  # pragma: no cover -- runtime WS errors
             try:
                 ws.send(json.dumps({"error": str(exc)}, ensure_ascii=False))
-            except Exception:
-                pass
+            except Exception as e:
+                log_suppressed("chat_ws_error_send", e)
 
     app.register_blueprint(bp)
 
