@@ -2,6 +2,46 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.8] — 2026-07-02 — Concurrency Hotfix
+
+### Fixed
+- **Audit log rotation now preserves inode** (`audit/rotation.py`):
+  `_recreate_empty_locked()` truncates audit.jsonl in place via
+  `open("w") + close`, replacing the prior `unlink() + create()` pattern
+  that allocated a fresh inode on every rotation. Closes silent data loss
+  for concurrent writers holding an FD to the unlinked inode.
+- **SQLite connection leak in host_config** (`config/host_config.py`):
+  `_db_conn()` now returns a cached singleton instead of opening a fresh
+  `sqlite3.connect()` on every call (each leak consumed an FD). Set
+  `PRAGMA journal_mode=WAL`, `busy_timeout=5000`, `synchronous=NORMAL`
+  on first open.
+- **DELETE+INSERT not atomic** (`config/host_config.py`):
+  `_invalidate_cache` and `_populate_cache` now wrap multi-statement
+  writes in `BEGIN IMMEDIATE`/`COMMIT`. Previously autocommit committed
+  per statement, so a reader between two DELETEs saw partial state.
+- **Heartbeat write non-atomic** (`monitor/health.py:record_run`):
+  Now writes to `<path>.tmp` then `os.replace()` to ensure a crash mid-write
+  never leaves a truncated JSON that `check_health` would misread as corrupt.
+- **Heartbeat skipped on monitor failure** (`pipeline.py:run_pipeline`):
+  The early-return path on `run_monitor()` failure now writes the heartbeat
+  before returning. Previously the next `check_health()` would falsely flag
+  the agent as stale on every monitor crash.
+- **SQLite `busy_timeout=0`** (`state/sqlite_store.py`, `storage/timeseries.py`):
+  Both now set `PRAGMA busy_timeout=5000` (and WAL mode where missing)
+  to avoid `OperationalError: database is locked` under contention.
+
+### Tests
+- `tests/test_v6_concurrency_hotfix.py` (8 tests, RED → GREEN):
+  inode preservation × 1, FD leak × 1, singleton conn × 1, atomic
+  transaction × 1, atomic heartbeat × 1, monitor-failure heartbeat × 1,
+  busy_timeout × 2.
+
+### Notes
+- No public API change. All routes / SQL schemas unchanged.
+- The SQLite caches (host_config + timeseries + state) now use WAL mode:
+  readers and writers no longer block each other. Existing on-disk
+  databases are upgraded automatically on first open.
+
 ## [1.5.7] — 2026-07-02 — Security Hotfix
 
 ### Fixed
