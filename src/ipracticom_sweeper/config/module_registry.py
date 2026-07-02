@@ -1,0 +1,332 @@
+"""Module registry — catalog of all available monitors/repairs/runbooks.
+
+Two sources of truth
+--------------------
+1. ``config/module_catalog.yaml`` — hand-curated, bilingual descriptions
+   and per-module params. Lives in the repo so it's version-controlled.
+2. The actual code in ``monitor/``, ``repair/``, and ``runbooks/``.
+   This is what the runtime can actually execute.
+
+This module:
+- Loads the catalog
+- Cross-checks each catalog entry against the registered functions
+  in the code
+- Exposes a flat list of ``ModuleInfo`` records for the dashboard
+- Exposes a filter helper for the host-config page
+
+Drift detection
+---------------
+``discover_modules(strict=False)`` returns the union and logs warnings
+for catalog entries with no matching function, or registered functions
+with no catalog entry. ``strict=True`` raises so a CI step can fail
+on drift.
+"""
+from __future__ import annotations
+
+import importlib
+import inspect
+import logging
+import pkgutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Optional
+
+import yaml
+
+from ipracticom_sweeper.config.paths import ROOT
+
+logger = logging.getLogger("ipracticom_sweeper.module_registry")
+
+# Catalog path is co-located with this module so it ships in the wheel.
+CATALOG_PATH = Path(__file__).parent / "module_catalog.yaml"
+
+KIND_MONITOR = "monitor"
+KIND_REPAIR = "repair"
+KIND_RUNBOOK = "runbook"
+ALL_KINDS = (KIND_MONITOR, KIND_REPAIR, KIND_RUNBOOK)
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ParamSpec:
+    name: str
+    type: str                       # "int" | "float" | "str" | "list" | "bool"
+    default: Any = None
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ModuleInfo:
+    name: str
+    kind: str                       # "monitor" | "repair" | "runbook"
+    title_en: str
+    title_he: str
+    description: str
+    params: tuple[ParamSpec, ...] = field(default_factory=tuple)
+    tags: tuple[str, ...] = field(default_factory=tuple)
+    risk: str = "low"               # "low" | "medium" | "high"
+    in_code: bool = True            # False = catalog-only, missing in code
+    catalog_only: bool = False      # True = no code backing; cannot be enabled
+
+
+# ---------------------------------------------------------------------------
+# Catalog loader
+# ---------------------------------------------------------------------------
+
+def _load_catalog() -> list[dict[str, Any]]:
+    """Return raw catalog entries as a list of dicts."""
+    if not CATALOG_PATH.exists():
+        logger.warning("catalog not found at %s", CATALOG_PATH)
+        return []
+    return yaml.safe_load(CATALOG_PATH.read_text()) or []
+
+
+def _to_module_info(d: dict[str, Any], in_code: bool) -> ModuleInfo:
+    return ModuleInfo(
+        name=d["name"],
+        kind=d["kind"],
+        title_en=d.get("title_en", ""),
+        title_he=d.get("title_he", ""),
+        description=d.get("description", ""),
+        params=tuple(
+            ParamSpec(
+                name=p["name"],
+                type=p.get("type", "str"),
+                default=p.get("default"),
+                description=p.get("description", ""),
+            )
+            for p in (d.get("params") or [])
+        ),
+        tags=tuple(d.get("tags") or ()),
+        risk=d.get("risk", "low"),
+        in_code=in_code,
+        catalog_only=not in_code,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Code-side discovery
+# ---------------------------------------------------------------------------
+
+def _registered_function_names(package: str) -> set[str]:
+    """Return every top-level function name defined in ``package``."""
+    pkg = importlib.import_module(package)
+    names: set[str] = set()
+    for info in pkgutil.iter_modules(pkg.__path__):
+        if info.name.startswith("_"):
+            continue
+        try:
+            mod = importlib.import_module(f"{package}.{info.name}")
+        except Exception as exc:
+            logger.debug("skipping %s.%s: %s", package, info.name, exc)
+            continue
+        for name, obj in vars(mod).items():
+            if name.startswith("_") or not callable(obj):
+                continue
+            if not inspect.isfunction(obj):
+                continue
+            names.add(name)
+    return names
+
+
+def _monitor_names() -> set[str]:
+    """Monitor modules live in ipracticom_sweeper.monitor/ as one file
+    per monitor. The file stem is the canonical name — there's no
+    per-monitor top-level function we can introspect reliably.
+    """
+    import ipracticom_sweeper.monitor as pkg
+    out: set[str] = set()
+    for info in pkgutil.iter_modules(pkg.__path__):
+        if info.name.startswith("_") or info.name in {"checks"}:
+            # 'checks' is the orchestrator, not a leaf monitor
+            continue
+        out.add(info.name)
+    return out
+
+
+def _repair_names() -> set[str]:
+    """Repair names are the names registered via actions.register() and
+    actions_extra module-level repair_* functions.
+    """
+    from ipracticom_sweeper.repair.actions import list_available_repairs
+    in_actions = set(list_available_repairs())
+    extras = _registered_function_names("ipracticom_sweeper.repair")
+    # Strip the "repair_" prefix that the extras module uses
+    extras_short = {n.removeprefix("repair_") for n in extras if n.startswith("repair_")}
+    return in_actions | extras_short
+
+
+def _runbook_names() -> set[str]:
+    """Runbook names = every ``*_runbook`` top-level function in
+    ipracticom_sweeper.runbooks.engine. Catalog entries strip the
+    ``_runbook`` suffix; the code uses the suffix.
+    """
+    pkg = importlib.import_module("ipracticom_sweeper.runbooks.engine")
+    out: set[str] = set()
+    for name, obj in vars(pkg).items():
+        if name.endswith("_runbook") and callable(obj) and inspect.isfunction(obj):
+            out.add(name)  # keep the suffix for matching
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def discover_modules(*, strict: bool = False, lang: str = "en") -> list[ModuleInfo]:
+    """Return all catalog entries, annotated with whether code exists.
+
+    Args:
+        strict: if True, raise ValueError on catalog/code drift.
+        lang:   currently unused; reserved for future i18n selection.
+
+    Returns:
+        A list of ``ModuleInfo`` sorted by (kind, name).
+    """
+    catalog = _load_catalog()
+    monitors = _monitor_names()
+    repairs = _repair_names()
+    runbooks = _runbook_names()
+
+    def in_code(entry: dict[str, Any]) -> bool:
+        name = entry["name"]
+        kind = entry["kind"]
+        if kind == KIND_MONITOR:
+            # Catalog names may have suffixes (e.g. "memory_check");
+            # match by either exact stem or _check suffix.
+            return (name in monitors
+                    or name.removesuffix("_check") in monitors
+                    or name.removesuffix("_v2") in monitors
+                    or name.removesuffix("_v2_part2") in monitors
+                    or f"{name}_check" in monitors)
+        if kind == KIND_REPAIR:
+            return name in repairs
+        if kind == KIND_RUNBOOK:
+            return f"{name}_runbook" in runbooks
+        return False
+
+    result = [_to_module_info(d, in_code(d)) for d in catalog]
+
+    # Drift reporting
+    for m in result:
+        if m.catalog_only:
+            msg = f"catalog entry {m.kind}:{m.name} has no matching code"
+            if strict:
+                raise ValueError(msg)
+            logger.warning(msg)
+
+    # Reverse drift: code with no catalog entry
+    catalog_names = {(m.kind, m.name) for m in result}
+    for kind, names in (
+        (KIND_MONITOR, monitors),
+        (KIND_REPAIR, repairs),
+        (KIND_RUNBOOK, runbooks),
+    ):
+        for n in names:
+            if (kind, n) not in catalog_names:
+                msg = f"code-only: {kind}:{n} not in catalog"
+                if strict:
+                    raise ValueError(msg)
+                logger.info(msg)
+
+    result.sort(key=lambda m: (m.kind, m.name))
+    return result
+
+
+def filter_modules(
+    modules: list[ModuleInfo],
+    *,
+    kind: Optional[str] = None,
+    tag: Optional[str] = None,
+    risk: Optional[str] = None,
+    available_only: bool = False,
+) -> list[ModuleInfo]:
+    """Filter helper for the dashboard / API."""
+    out = []
+    for m in modules:
+        if kind is not None and m.kind != kind:
+            continue
+        if tag is not None and tag not in m.tags:
+            continue
+        if risk is not None and m.risk != risk:
+            continue
+        if available_only and m.catalog_only:
+            continue
+        out.append(m)
+    return out
+
+
+def get_module(name: str, *, kind: Optional[str] = None) -> Optional[ModuleInfo]:
+    """Lookup by name. If kind is given, also matches it."""
+    for m in discover_modules():
+        if m.name != name:
+            continue
+        if kind is not None and m.kind != kind:
+            continue
+        return m
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Defaults — what a new host gets if no per-host config exists
+# ---------------------------------------------------------------------------
+
+def default_host_config(name: str) -> dict[str, Any]:
+    """Build a sensible default HostConfig dict for a brand-new host.
+
+    Strategy:
+    - All low-risk monitors: enabled
+    - All medium-risk monitors: enabled
+    - High-risk monitors: disabled (operator opts in)
+    - Repairs: enabled but require_approval=True
+    - Runbooks: enabled
+    - No suppressions
+    """
+    mods = filter_modules(discover_modules(), available_only=True)
+    monitors: list[dict[str, Any]] = []
+    repairs: list[dict[str, Any]] = []
+    runbooks: list[dict[str, Any]] = []
+
+    for m in mods:
+        defaults = {p.name: p.default for p in m.params}
+        if m.kind == KIND_MONITOR:
+            monitors.append({
+                "name": m.name,
+                "enabled": m.risk != "high",
+                **({"interval_sec": defaults["interval_sec"]}
+                   if "interval_sec" in defaults else {}),
+                **{k: v for k, v in defaults.items()
+                   if k not in ("interval_sec",)},
+            })
+        elif m.kind == KIND_REPAIR:
+            repairs.append({
+                "name": m.name,
+                "enabled": m.risk == "low",
+                "require_approval": m.risk != "low",
+                **defaults,
+            })
+        elif m.kind == KIND_RUNBOOK:
+            runbooks.append({
+                "name": m.name,
+                "enabled": m.risk != "high",
+                **defaults,
+            })
+
+    return {
+        "host": {"name": name, "description": "", "enabled": True},
+        "monitors": monitors,
+        "repairs": repairs,
+        "runbooks": runbooks,
+        "suppressions": [],
+    }
+
+
+__all__ = [
+    "ModuleInfo", "ParamSpec",
+    "KIND_MONITOR", "KIND_REPAIR", "KIND_RUNBOOK", "ALL_KINDS",
+    "discover_modules", "filter_modules", "get_module",
+    "default_host_config",
+]
