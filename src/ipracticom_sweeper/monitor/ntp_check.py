@@ -14,6 +14,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 CHRONY_OFFSET_RE = re.compile(
     r"Last\s+offset\s*:\s*([+-]?\d+(?:\.\d+)?)\s*(\w+)",
@@ -80,7 +82,8 @@ def _parse_chronyc(stdout: str) -> Optional[float]:
         if m:
             try:
                 return _parse_offset_seconds(float(m.group(1)), m.group(2))
-            except ValueError:
+            except ValueError as e:
+                log_suppressed("ntp_parse_chronyc", e)
                 continue
     return None
 
@@ -103,15 +106,16 @@ def _parse_ntpq(stdout: str) -> Optional[float]:
                 try:
                     # ntpq -p offset column is in seconds (with decimal)
                     return float(parts[8])
-                except ValueError:
-                    pass
+                except ValueError as e:
+                    log_suppressed("ntp_parse_ntpq_offset", e)
         # Fallback: regex match
         m = NTPQ_OFFSET_RE.match(line)
         if m:
             try:
                 # ntpq -p offset column is in seconds
                 return float(m.group(1))
-            except ValueError:
+            except ValueError as e:
+                log_suppressed("ntp_parse_regex_offset", e)
                 continue
     return None
 

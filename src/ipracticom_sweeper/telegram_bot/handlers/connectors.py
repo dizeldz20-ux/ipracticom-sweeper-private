@@ -39,6 +39,7 @@ from ipracticom_sweeper.telegram_bot.states import (
     get_connector_form,
     set_connector_form,
 )
+from ipracticom_sweeper._log import log_suppressed
 
 
 def _agent(context) -> AgentClient:
@@ -196,8 +197,8 @@ async def connector_delete_confirm(update, context) -> dict[str, Any]:
     if cq is not None:
         try:
             await cq.answer(f"🗑️ {name} נמחק")
-        except Exception:
-            pass
+        except Exception as e:
+            log_suppressed("connectors_delete_toast", e)
     return {
         "text": f"✅ מחבר <b>{name}</b> הוסר.",
         "reply_markup": InlineKeyboardMarkup([

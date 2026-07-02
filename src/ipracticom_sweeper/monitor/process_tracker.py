@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import time
 
+from .._log import log_suppressed
+
 
 @dataclass
 class TopProcess:
@@ -91,8 +93,8 @@ def _scan_processes() -> list[dict]:
                 if line.startswith("MemTotal:"):
                     total_mem = int(line.split()[1])  # kB
                     break
-    except OSError:
-        pass
+    except OSError as e:
+        log_suppressed("process_tracker_meminfo", e)
 
     for pid_dir in os.listdir("/proc"):
         if not pid_dir.isdigit():
