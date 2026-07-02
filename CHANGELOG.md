@@ -2,6 +2,18 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.1] — 2026-07-02 — Silent-Except Slice 5.3
+
+### Fixed
+- **Silent exception blocks** in 3 more files replaced with `log_suppressed()`:
+  - `monitor/freeswitch.py`: 2 → 0 (sock.close() in finally blocks)
+  - `monitor/self_disk.py`: 3 → 0 (rotation unlink/rename/promote)
+  - `telegram_bot/handlers/fleet.py`: 3 → 0 (callback ack, log download, tmpfile cleanup)
+- **Cumulative since v1.5.0**: 44 silent blocks now auditable. Remaining: 23 in 18 files (v1.5.2+).
+
+### Notes
+- No public API change.
+
 ## [1.5.0] — 2026-07-02 — Silent-Except Gate (Slice 5.2)
 
 ### Added
