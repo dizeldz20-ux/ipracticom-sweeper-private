@@ -20,6 +20,7 @@ class SQLiteStateStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")  # v1.5.8: was 0, fail-fast on lock
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._init_schema()
 

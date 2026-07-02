@@ -142,7 +142,13 @@ def record_run(
         "repairs_attempted": repairs_attempted,
         "extra": extra,
     }
-    path.write_text(json.dumps(record, indent=2))
+    # v1.5.8 fix: atomic write (tmp + os.replace). Previously write_text()
+    # was non-atomic — a SIGKILL mid-write left a truncated JSON that
+    # check_health would misread as "corrupt" and falsely flag the agent
+    # as broken.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(record, indent=2))
+    os.replace(tmp, path)
     return path
 
 

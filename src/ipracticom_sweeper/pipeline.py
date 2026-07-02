@@ -99,6 +99,14 @@ def run_pipeline(
         monitor_overall = snap.get("overall_status", "unknown")
     except Exception as e:
         logger.error("pipeline_monitor_failed", error=str(e))
+        # v1.5.8 fix: write the heartbeat even on monitor failure so the
+        # next check_health() doesn't falsely flag the agent as stale.
+        # (Previously the heartbeat was only written on the success path.)
+        try:
+            from ipracticom_sweeper.monitor.health import record_run
+            record_run(defcon=1, problems_found=0, repairs_attempted=0)
+        except Exception as hb_exc:
+            logger.warning("heartbeat_write_failed", error=str(hb_exc))
         return PipelineResult(
             started_at=started_at,
             finished_at=datetime.now(timezone.utc).isoformat(),

@@ -452,12 +452,36 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# Module-level cached SQLite connection (singleton).
+# None = not yet opened. First call to _db_conn() opens it.
+_CONN: sqlite3.Connection | None = None
+
+
 def _db_conn() -> sqlite3.Connection:
-    p = _db_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p), timeout=5, isolation_level=None)
-    _init_db(conn)
-    return conn
+    """Return a process-wide cached SQLite connection.
+
+    v1.5.8 fix: previously this opened a fresh connection on every call and
+    never closed it. After a few thousand cache reads the agent would hit
+    EMFILE. The connection is now cached and reused across threads
+    (check_same_thread=False). WAL + busy_timeout are set on first open.
+    """
+    global _CONN
+    # Use globals() so we don't raise NameError if a test (or a fresh
+    # import in an unusual context) has popped _CONN from the module namespace.
+    if globals().get("_CONN") is None:
+        p = _db_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Default isolation_level is "" (deferred); we use explicit BEGIN/COMMIT
+        # in callers so multi-statement writes are atomic.
+        conn = sqlite3.connect(
+            str(p), timeout=5, check_same_thread=False,
+        )
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        _init_db(conn)
+        _CONN = conn
+    return _CONN
 
 
 # Cache invalidation: when a YAML file is written, drop the SQLite
@@ -466,10 +490,19 @@ def _invalidate_cache(name: str) -> None:
     with _DB_LOCK:
         try:
             conn = _db_conn()
+            # v1.5.8 fix: wrap DELETE statements in a single transaction.
+            # Previously, isolation_level=None (autocommit) committed each
+            # DELETE separately, so a reader between two DELETEs saw partial state.
+            conn.execute("BEGIN IMMEDIATE")
             for table in ("host_monitors", "host_repairs",
                           "host_runbooks", "host_suppressions", "hosts"):
                 conn.execute(f"DELETE FROM {table} WHERE host = ?", (name,))
+            conn.execute("COMMIT")
         except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
             log_suppressed("host_config._invalidate_cache.delete", exc,
                            extras={"host": name})
 
@@ -478,39 +511,52 @@ def _populate_cache(cfg: HostConfig) -> None:
     """Write a HostConfig to the SQLite cache. Idempotent."""
     with _DB_LOCK:
         conn = _db_conn()
-        # Wipe and rewrite (cache row is owned by the YAML, no merge needed)
-        for table in ("host_monitors", "host_repairs",
-                      "host_runbooks", "host_suppressions"):
+        # v1.5.8 fix: wrap the wipe+rewrite in one transaction. Previously,
+        # DELETE-then-INSERT under autocommit committed per statement — a
+        # reader could observe the host row with zero monitors/repairs
+        # between the DELETE pass and the INSERT pass.
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for table in ("host_monitors", "host_repairs",
+                          "host_runbooks", "host_suppressions"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE host = ?", (cfg.name,),
+                )
             conn.execute(
-                f"DELETE FROM {table} WHERE host = ?", (cfg.name,)
+                "INSERT OR REPLACE INTO hosts VALUES (?, ?, ?, ?)",
+                (cfg.name, cfg.description, int(cfg.enabled), cfg.updated_at),
             )
-        conn.execute(
-            "INSERT OR REPLACE INTO hosts VALUES (?, ?, ?, ?)",
-            (cfg.name, cfg.description, int(cfg.enabled), cfg.updated_at),
-        )
-        for m in cfg.monitors:
-            conn.execute(
-                "INSERT INTO host_monitors VALUES (?, ?, ?, ?, ?)",
-                (cfg.name, m.name, int(m.enabled), m.interval_sec,
-                 yaml.safe_dump(m.settings) or "{}"),
-            )
-        for r in cfg.repairs:
-            conn.execute(
-                "INSERT INTO host_repairs VALUES (?, ?, ?, ?, ?)",
-                (cfg.name, r.name, int(r.enabled), int(r.require_approval),
-                 yaml.safe_dump(r.settings) or "{}"),
-            )
-        for rb in cfg.runbooks:
-            conn.execute(
-                "INSERT INTO host_runbooks VALUES (?, ?, ?, ?)",
-                (cfg.name, rb.name, int(rb.enabled),
-                 yaml.safe_dump(rb.settings) or "{}"),
-            )
-        for s in cfg.suppressions:
-            conn.execute(
-                "INSERT INTO host_suppressions VALUES (?, ?, ?, ?)",
-                (cfg.name, s.rule, s.until, s.reason),
-            )
+            for m in cfg.monitors:
+                conn.execute(
+                    "INSERT INTO host_monitors VALUES (?, ?, ?, ?, ?)",
+                    (cfg.name, m.name, int(m.enabled), m.interval_sec,
+                     yaml.safe_dump(m.settings) or "{}"),
+                )
+            for r in cfg.repairs:
+                conn.execute(
+                    "INSERT INTO host_repairs VALUES (?, ?, ?, ?, ?)",
+                    (cfg.name, r.name, int(r.enabled), int(r.require_approval),
+                     yaml.safe_dump(r.settings) or "{}"),
+                )
+            for rb in cfg.runbooks:
+                conn.execute(
+                    "INSERT INTO host_runbooks VALUES (?, ?, ?, ?)",
+                    (cfg.name, rb.name, int(rb.enabled),
+                     yaml.safe_dump(rb.settings) or "{}"),
+                )
+            for s in cfg.suppressions:
+                conn.execute(
+                    "INSERT INTO host_suppressions VALUES (?, ?, ?, ?)",
+                    (cfg.name, s.rule, s.until, s.reason),
+                )
+            conn.execute("COMMIT")
+        except sqlite3.Error as exc:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            log_suppressed("host_config._populate_cache.write", exc,
+                           extras={"host": cfg.name})
 
 
 def _cache_get(name: str) -> Optional[HostConfig]:

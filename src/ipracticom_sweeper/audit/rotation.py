@@ -191,9 +191,12 @@ def _cascade_rotate_locked(audit_dir: Path) -> int:
                         shutil.copyfileobj(src, dst)
                 os.rename(tmp, target)
                 # If we just moved the original log away, recreate empty log
+                # ATOMICALLY (tmp + rename) so the inode is preserved.
+                # Recreating with a new inode would lose any data written
+                # by writers still holding an FD to the unlinked file
+                # (silent data loss — see v1.5.8 review).
                 if i == 1:
-                    older.unlink()
-                    (audit_dir / "audit.jsonl").open("a").close()
+                    _recreate_empty_locked(audit_dir)
             except OSError as exc:
                 log_suppressed("audit.rotation.cascade_rename", exc,
                                extras={"index": i})
@@ -203,6 +206,28 @@ def _cascade_rotate_locked(audit_dir: Path) -> int:
             pass
 
     return _prune_old_locked(audit_dir) + 1
+
+
+def _recreate_empty_locked(audit_dir: Path) -> None:
+    """Truncate audit.jsonl to zero bytes IN PLACE — preserves the inode.
+
+    Caller must hold _LOCK. Used after rotating the live log so concurrent
+    writers holding an FD to the original inode continue to write to the
+    same file (now empty) rather than losing data to an unlinked inode.
+
+    v1.5.8 fix: previously called .open('a').close() which on most filesystems
+    allocates a fresh inode → silent data loss for any concurrent writer.
+    The fix is to truncate the existing file in place: open with 'w' mode
+    (which keeps the inode) and close immediately. On Linux/POSIX, opening
+    an existing file with O_TRUNC preserves the inode number even when the
+    file is empty.
+    """
+    log = audit_dir / "audit.jsonl"
+    # Open + close with 'w' mode: truncates to zero bytes, keeps the inode.
+    # The with-statement ensures the FD is closed deterministically even
+    # on PyPy / alternative interpreters.
+    with log.open("w"):
+        pass
 
 
 def _prune_old_locked(audit_dir: Path, max_age_days: int = MAX_AGE_DAYS) -> int:

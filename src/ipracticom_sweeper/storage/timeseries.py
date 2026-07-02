@@ -28,6 +28,11 @@ class TimeSeriesDB:
         self._conn = sqlite3.connect(
             str(self.db_path), check_same_thread=False
         )
+        # v1.5.8: enable WAL + busy_timeout to avoid 'database is locked'
+        # errors under contention and to allow concurrent readers.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._init_schema()
 
     def _init_schema(self) -> None:
