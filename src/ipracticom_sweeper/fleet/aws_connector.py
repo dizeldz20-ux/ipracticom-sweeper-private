@@ -47,6 +47,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
 
+from ipracticom_sweeper._log import log_suppressed
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,8 +95,8 @@ def collect():
     try:
         with open("/proc/uptime") as f:
             out["uptime_seconds"] = int(float(f.read().split()[0]))
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("fleet.aws_connector.read_uptime", exc, level=logging.DEBUG)
 
     # --- load average -----------------------------------------------------
     try:
@@ -103,8 +105,8 @@ def collect():
             out["load"]["1m"] = float(parts[0])
             out["load"]["5m"] = float(parts[1])
             out["load"]["15m"] = float(parts[2])
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("fleet.aws_connector.read_loadavg", exc, level=logging.DEBUG)
 
     # --- memory -----------------------------------------------------------
     try:
@@ -119,16 +121,16 @@ def collect():
         out["memory"]["available_kb"] = avail
         if total > 0:
             out["memory"]["used_percent"] = round((total - avail) * 100.0 / total, 1)
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("fleet.aws_connector.read_meminfo", exc, level=logging.DEBUG)
 
     # --- disk -------------------------------------------------------------
     try:
         u = shutil.disk_usage("/")
         out["disk"]["used_percent"] = round(u.used * 100.0 / u.total, 1)
         out["disk"]["path"] = "/"
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("fleet.aws_connector.read_disk", exc, level=logging.DEBUG)
 
     # --- top 5 processes by CPU ------------------------------------------
     try:
@@ -142,8 +144,8 @@ def collect():
                     "mem_percent": float(parts[2]),
                     "name": parts[3][:40],
                 })
-    except Exception:
-        pass
+    except Exception as exc:
+        log_suppressed("fleet.aws_connector.read_top_processes", exc, level=logging.DEBUG)
 
     # --- failed systemd units --------------------------------------------
     try:
