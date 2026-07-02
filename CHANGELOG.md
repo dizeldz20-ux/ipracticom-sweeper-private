@@ -2,6 +2,57 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.1.0] — 2026-07-01 — Deep Checks v2 + Approval Workflow v2
+
+### Added
+- **Sprint 12 (Network + Service Probes)**: 3 monitors, 31 tests
+  - `healthz_probe`: HTTP healthz endpoint probe with timeout/SSL controls
+  - `systemd_state`: masked/disabled/failed unit detector
+  - `ntp_check`: chronyc/ntpq clock-skew with unit normalization (sec/ms/us)
+- **Sprint 14 (PostgreSQL Deep)**: 5 monitors, 35 tests
+  - `pg_long_query`: queries running >5min by default, classifies by count
+  - `pg_replication_lag`: max replay_lag across replicas, disabled if stand-alone
+  - `pg_locks`: blocked queries via `pg_blocking_pids()`, Lock wait_event
+  - `pg_bloat`: dead-tuple ratio per table, reports top-N bloated
+  - `pg_autovacuum`: lag since last_autovacuum, never-vacuumed → crit
+- **Sprint 16 (Backups + Recovery)**: 3 monitors, 25 tests
+  - `backup_fresh`: snapshot age vs configurable RPO
+  - `backup_size`: size sanity check (delta vs prior)
+  - `restore_test`: parse recent restore-test output for status
+- **Sprint 18 (Approval Workflow v2)**: 5 capabilities, 25 tests
+  - Expiry window — proposals expire after 24h default, background reaper
+  - Two-operator quorum — high-risk actions need 2 distinct user_ids
+  - Comment thread — operators can add comments, surfaced in Telegram + dashboard
+  - Required rejection reason — POST /reject must include reason; optional `dry_run`
+  - CSV export — `GET /api/approvals/export.csv` with UTF-8 BOM + date filter
+- **Test gap closure (Level 1)**: 91 tests across audit_logger, self_disk,
+  telegram_health, runbooks_engine — covers ENV-vars-at-import-time pitfalls
+  and the actual dataclass field names that earlier tests got wrong
+
+### Fixed
+- `ntp_check.py` — ntpq parser now handles `*`/`+`/`#`/`o`/`-` tally codes via
+  split-based parsing; regex previously skipped the selected peer
+- `ntp_check.py` — `_parse_offset_seconds("microseconds")` now correctly
+  recognizes the `microsec` prefix (was only matching `usec`)
+- `pyproject.toml` — pinned `flask-sock>=0.7.0` dependency. Was previously
+  silently failing at chat-blueprint import time, breaking 50+ dashboard
+  tests (template `url_for('chat.chat_index')` raised BuildError).
+
+### Tests
+- **1606 → 1701 passing / 1701 collected** (+95 net after dependency fix,
+  +207 from new sprints/gap-closure; 0 regressions across the suite)
+- 12 files added, 5 files modified across 5 commits (`3c84c47`, `71100c3`,
+  `4c597d5`, `5485fb1`, `33028a1`)
+
+### Changed
+- `pyproject.toml` `version` 1.0.0 → 1.1.0
+- `src/ipracticom_sweeper/__init__.py` `__version__` 1.0.0 → 1.1.0
+
+### Documentation
+- This CHANGELOG section documents all 5 sprint deliveries
+
+---
+
 ## [1.0.0] — 2026-07-01 — Self-Resilience + Deep Checks + Forecast v2
 
 ### Added
