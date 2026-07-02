@@ -388,8 +388,8 @@ def check_fs09_rtp_ports_open(
         finally:
             try:
                 sock.close()
-            except Exception:
-                pass
+            except Exception as e:
+                log_suppressed("freeswitch_port_anchor_close", e)
 
     results = {p: _held(p) for p in anchors}
     held_count = sum(1 for v in results.values() if v)

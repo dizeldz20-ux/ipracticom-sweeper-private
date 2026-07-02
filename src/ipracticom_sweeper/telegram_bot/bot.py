@@ -36,6 +36,7 @@ from telegram.ext import (
 from ipracticom_sweeper.telegram_bot.auth import UnauthorizedError, authorized_only
 from ipracticom_sweeper.telegram_bot.config import ConfigError, load_config
 from ipracticom_sweeper.telegram_bot.services.agent_client import AgentClient
+from ipracticom_sweeper._log import log_suppressed
 
 # v0.4.2 handlers — one module per menu section.
 from ipracticom_sweeper.telegram_bot.handlers import (
@@ -72,9 +73,9 @@ async def _send_result(target, result: dict | None) -> None:
         await cq.answer()
         try:
             await cq.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
-        except Exception:
+        except Exception as e:
             # Message not modified / inline keyboard same — ignore.
-            pass
+            log_suppressed("telegram_bot_edit_message", e)
         return
 
     msg = getattr(target, "message", None) or target

@@ -29,6 +29,8 @@ from .actions import (
     _VALID_SYSTEMD_UNIT,
 )
 
+from .._log import log_suppressed
+
 
 # --- repair_rotate_nginx_logs ----------------------------------------------
 
@@ -96,8 +98,8 @@ def repair_rotate_nginx_logs(
                 ["killall", "-USR1", "nginx"],
                 capture_output=True, timeout=5, check=False,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            log_suppressed("actions_extra_nginx_reload", e)
 
         duration = int((time.time() - start) * 1000)
         snap.metadata["bytes_freed"] = size_before

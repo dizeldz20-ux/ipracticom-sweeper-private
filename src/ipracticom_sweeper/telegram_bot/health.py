@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .._log import log_suppressed
+
 HEALTH_FILE = "telegram_bot_health.json"
 CONSECUTIVE_FAIL_THRESHOLD = 3
 PROBE_TIMEOUT = 5.0
@@ -129,7 +131,8 @@ class TokenHealthTracker:
             return
         try:
             data = json.loads(self.path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            log_suppressed("telegram_health_read", e)
             return
         self.last_status = data.get("last_status", "unknown")
         self.last_bot_username = data.get("last_bot_username")

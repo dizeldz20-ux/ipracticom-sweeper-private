@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from .._log import log_suppressed
+
 DEFCON_EMOJI: dict[int, str] = {
     1: "🚨",  # critical
     2: "🔴",  # high alert
@@ -112,8 +114,8 @@ def format_history(metric: str, samples: list[dict]) -> str:
             lines.append(
                 f"<i>min: {vmin:.2f}  |  max: {vmax:.2f}  |  latest: {vlast:.2f}</i>"
             )
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            log_suppressed("telegram_formatter_summary", e)
     # Show last 5 timestamps
     tail = samples[-5:]
     ts_lines = []

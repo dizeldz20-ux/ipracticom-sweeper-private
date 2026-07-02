@@ -11,6 +11,8 @@ from typing import Optional
 import structlog
 import yaml
 
+from .._log import log_suppressed
+
 logger = structlog.get_logger()
 
 # --- Paths -------------------------------------------------------------------
@@ -48,8 +50,8 @@ def get_server_id() -> str:
             )
             if id_resp.status_code == 200:
                 return id_resp.text
-    except Exception:
-        pass
+    except Exception as e:
+        log_suppressed("legacy_instance_id", e)
 
     # Fallback to hostname
     import socket

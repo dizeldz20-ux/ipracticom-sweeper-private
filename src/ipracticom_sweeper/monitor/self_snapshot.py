@@ -10,13 +10,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from .._log import log_suppressed
+
 
 def _state_dir_pct(state_dir: Path) -> Optional[float]:
     """Disk usage % of the state dir's mount."""
     from ipracticom_sweeper.monitor.self_disk import _disk_usage_pct
     try:
         return _disk_usage_pct(str(state_dir))
-    except Exception:
+    except Exception as e:
+        log_suppressed("self_snapshot_state_dir_pct", e)
         return None
 
 
@@ -25,7 +28,8 @@ def _audit_size_bytes(state_dir: Path) -> int:
     log = state_dir / "audit" / "audit.jsonl"
     try:
         return log.stat().st_size if log.exists() else 0
-    except OSError:
+    except OSError as e:
+        log_suppressed("self_snapshot_audit_size", e)
         return 0
 
 
@@ -35,7 +39,8 @@ def _bot_token_status(state_dir: Path) -> str:
     try:
         tracker = TokenHealthTracker(state_dir=state_dir)
         return tracker.last_status
-    except Exception:
+    except Exception as e:
+        log_suppressed("self_snapshot_bot_token", e)
         return "unknown"
 
 
@@ -55,10 +60,11 @@ def _watchdog_restart_count(state_dir: Path) -> int:
                 t = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
                 if now - t < 3600:
                     count += 1
-            except Exception:
-                pass
+            except Exception as e:
+                log_suppressed("self_snapshot_recent_count", e)
         return count
-    except Exception:
+    except Exception as e:
+        log_suppressed("self_snapshot_watchdog_count", e)
         return 0
 
 

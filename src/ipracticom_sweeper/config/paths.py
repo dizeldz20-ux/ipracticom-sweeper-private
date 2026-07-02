@@ -36,6 +36,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from .._log import log_suppressed
+
 # ---------------------------------------------------------------------------
 # Environment handling
 # ---------------------------------------------------------------------------
@@ -69,10 +71,10 @@ def _ensure(p: Path) -> Path:
     """Return ``p`` with its parents created (best-effort, ignore EEXIST)."""
     try:
         p.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    except OSError as e:
         # If we can't create (e.g. read-only FS in a test), the caller will
         # surface the real error on write. Don't swallow it here.
-        pass
+        log_suppressed("paths_ensure_mkdir", e)
     return p
 
 

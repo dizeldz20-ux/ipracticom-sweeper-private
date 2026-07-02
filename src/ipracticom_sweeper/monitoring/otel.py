@@ -23,6 +23,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from .._log import log_suppressed
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,8 +178,8 @@ class Tracer:
         if span.trace_id != "noop" and self.exporter is not None:
             try:
                 self.exporter.export(span)
-            except Exception:
-                pass
+            except Exception as e:
+                log_suppressed("otel_exporter_export", e)
         # Pop the span stack: if this was a child, restore parent as current
         if span.parent_span_id:
             self._current_span_id = span.parent_span_id
