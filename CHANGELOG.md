@@ -2,6 +2,57 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.0] — 2026-07-02 — Per-Host Configuration & Module Registry
+
+### Added
+- **`config/host_config.py`** — per-host config (Slice 1)
+  - `HostConfig` dataclass: monitors / repairs / runbooks / suppressions / enabled / description
+  - YAML at `$STATE_DIR/hosts/<name>.yaml` — git-friendly source of truth
+  - SQLite cache at `$STATE_DIR/hosts.db` — read-cache for the dashboard
+  - Atomic YAML write (tmp + rename); invalidate-then-populate cache
+  - Host name sanitization `[a-zA-Z0-9_.-]`; path-traversal rejected
+  - `Suppression` dataclass (reason, until); permanent when `until=None`
+  - 16 tests in `test_host_config.py`
+- **`config/module_catalog.yaml`** — bilingual, version-controlled catalog (Slice 2)
+  - 37 monitors, 15 repairs, 5 runbooks
+  - Each entry: `title_en` / `title_he`, description, params, tags, risk
+  - Catalog is metadata source of truth; code is runtime source
+- **`config/module_registry.py`** — discover + filter + default-config (Slice 2)
+  - `discover_modules()` cross-checks catalog ↔ code (strict mode raises on drift)
+  - `filter_modules(kind=, tag=, risk=, available_only=)` for the dashboard
+  - `get_module(name, kind=)` lookup helper
+  - `default_host_config(name)` builds a safe-by-default `HostConfig`
+    (high-risk monitors disabled, medium/high repairs require approval)
+  - `_MONITOR_ALIASES` lets catalog names diverge from file stems
+    (`fs_inode_check`, `freeswitch_health` → `monitor/freeswitch.py`)
+  - Suffix conventions: `name_check` ↔ `name.py`, `name_runbook` /
+    `name_recovery_runbook`
+  - 17 tests in `test_module_registry.py`
+
+### Changed
+- Three previously orphaned monitors (`health`, `healthz_probe`, `processes`)
+  promoted into the catalog with bilingual entries — they were already shipped
+  in code but not visible to the dashboard
+- `monitor:checks` (the orchestrator, not a leaf monitor) removed from catalog
+- Two catalog entries (`fs_inode_check`, `freeswitch_health`) now resolve
+  to the consolidated `monitor/freeswitch.py` via `_MONITOR_ALIASES`
+- Reverse-drift detector recognises `name_check` / `name_health` suffix
+  conventions so catalog↔code cross-check is correct
+
+### Hardening
+- `test_30_2_no_catalog_only_entries_except_ignored` and
+  `test_30_2_strict_mode_raises_on_any_drift` introduced as gate tests so
+  future catalog drift fails CI rather than silently degrading the dashboard
+
+### Deferred (to v1.4.0)
+- **Suppression engine** — runtime evaluation of `Suppression` entries
+  (UI controls, time-based cleanup, audit trail)
+- **Dashboard routes** — web UI bindings for `host_config` + `module_registry`
+- **Dashboard refactor** (1945 lines → split by route group)
+- **Remaining 44 silent except blocks** (audit/rotation.py, otel.py, formatter.py)
+- **Prediction class merge** (2 duplicates in `predict/`)
+- **Logging unification** (stdlib → structlog)
+
 ## [1.2.0] — 2026-07-01 — QA Foundation: paths + log + API hardening
 
 ### Added
