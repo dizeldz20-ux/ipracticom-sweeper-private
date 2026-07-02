@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Any
 
-from flask import Flask, abort, jsonify, request
+from flask import Flask, Response, abort, jsonify, request
 
 from ipracticom_sweeper.config import (
     Connector,
@@ -745,6 +745,34 @@ def create_app() -> Flask:
             "reason": proposal.reason,
         })
         return jsonify({"ok": True, "status": "rejected"})
+
+    # Sprint 18.5 — CSV export of the approval audit log
+    @app.route("/api/approvals/export.csv", methods=["GET"])
+    @require_auth
+    def api_approvals_export():
+        """Export approval audit log as CSV (UTF-8 BOM, Excel-friendly)."""
+        from pathlib import Path
+        from ipracticom_sweeper.repair import approvals_v2
+
+        state_dir = Path(os.environ.get(
+            "IPRACTICOM_SWEEPER_STATE_DIR", "/var/lib/ipracticom-sweeper"
+        ))
+        pending_dir = state_dir / "pending_repairs"
+        approved_dir = pending_dir / "approved"
+        rejected_dir = pending_dir / "rejected"
+        audit_log = state_dir / "audit" / "repairs.jsonl"
+
+        since = request.args.get("since")
+        until = request.args.get("until")
+        csv_bytes = approvals_v2.export_audit_csv(
+            pending_dir, approved_dir, rejected_dir, audit_log,
+            since=since, until=until,
+        )
+        return Response(
+            csv_bytes,
+            mimetype="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="approvals.csv"'},
+        )
 
     # Fleet (v0.4.2) — local host + every configured SSM connector.
     @app.route("/api/fleet", methods=["GET"])
