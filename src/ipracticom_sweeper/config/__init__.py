@@ -3,6 +3,7 @@ from .loader import ConfigLoader
 from .secrets import load_token, TokenInfo
 from .validator import validate, is_valid, SCHEMA
 from . import legacy
+from . import paths as _paths
 from . import connectors as _connectors
 from .connectors import (
     Connector,
@@ -17,6 +18,19 @@ from .connectors import (
     connectors_file,
     state_dir,
 )
+
+# Re-export centralized filesystem paths so callers can do
+# `from ipracticom_sweeper.config import paths` and use one source of truth.
+paths = _paths  # submodule reference
+state_dir = _paths.state_dir  # preferred over the older connectors.state_dir
+maintenance_dir = _paths.maintenance_dir
+fleet_snapshots = _paths.fleet_snapshots
+pending_repairs = _paths.pending_repairs
+approved_repairs = _paths.approved_repairs
+rejected_repairs = _paths.rejected_repairs
+audit_log = _paths.audit_log
+ntp_history = _paths.ntp_history
+token_health = _paths.token_health
 
 # Re-export legacy functions for backward compatibility
 get_server_id = legacy.get_server_id
