@@ -2,6 +2,18 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.2] — 2026-07-02 — Silent-Except Slice 5.4
+
+### Fixed
+- **Silent exception blocks** in 3 more files replaced with `log_suppressed()`:
+  - `monitor/ntp_check.py`: 3 → 0 (parsing malformed ntpq/chronyc lines)
+  - `monitor/process_tracker.py`: 1 → 0 (/proc/meminfo read)
+  - `telegram_bot/handlers/connectors.py`: 1 → 0 (delete callback toast)
+- **Cumulative since v1.5.0**: 49 silent blocks now auditable. Remaining: 20 in 15 files (v1.5.3+).
+
+### Notes
+- No public API change.
+
 ## [1.5.1] — 2026-07-02 — Silent-Except Slice 5.3
 
 ### Fixed
