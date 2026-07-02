@@ -18,6 +18,7 @@ File layout:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 import uuid
@@ -40,6 +41,20 @@ _BASE_STATE = Path(
 PENDING_DIR = _BASE_STATE / "pending_repairs"
 APPROVED_DIR = PENDING_DIR / "approved"
 REJECTED_DIR = PENDING_DIR / "rejected"
+
+# Proposal IDs are produced by uuid.uuid4().hex[:12] (see create_proposal).
+# Validating strictly prevents path-traversal via crafted URL params.
+_PID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _validate_pid(pid: str) -> None:
+    """Reject pids with path-traversal or shell-meta characters.
+
+    Raises ValueError on bad input. Empty string, NUL bytes, slashes, `..`,
+    leading dots etc. are all rejected.
+    """
+    if not isinstance(pid, str) or not _PID_RE.match(pid):
+        raise ValueError(f"invalid pid: {pid!r}")
 AUDIT_LOG = _BASE_STATE / "audit" / "repairs.jsonl"
 
 
@@ -118,6 +133,7 @@ def get_proposal(pid: str) -> RepairProposal | None:
 
     Returns None if not found anywhere.
     """
+    _validate_pid(pid)
     _ensure_dirs()
     for base in (PENDING_DIR, APPROVED_DIR, REJECTED_DIR):
         path = base / f"{pid}.json"
@@ -132,6 +148,7 @@ def get_proposal(pid: str) -> RepairProposal | None:
 
 def set_status(pid: str, status: str) -> RepairProposal | None:
     """Update the proposal's status in-place."""
+    _validate_pid(pid)
     p = get_proposal(pid)
     if p is None:
         return None
@@ -143,6 +160,7 @@ def set_status(pid: str, status: str) -> RepairProposal | None:
 
 def archive(pid: str, subdir: str) -> bool:
     """Move a proposal file into approved/ or rejected/."""
+    _validate_pid(pid)
     src = PENDING_DIR / f"{pid}.json"
     if not src.exists():
         return False

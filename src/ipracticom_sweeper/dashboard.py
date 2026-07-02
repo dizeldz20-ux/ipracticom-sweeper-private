@@ -29,6 +29,8 @@ import base64
 import hmac
 import json
 import os
+import re
+import shlex
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -695,13 +697,17 @@ def approval_approve(pid):
     if p.status != "pending":
         return render_template("error.html", message=f"הבקשה כבר {p.status}"), 409
 
-    actor = request.form.get("actor") or os.environ.get("DASHBOARD_USER") or "operator"
+    # SECURITY: derive actor from authenticated principal, never from request.form.
+    actor = _actor_from_request()
+    # SECURITY: redact secrets from kwargs before writing to audit (passwords,
+    # tokens, api_keys). Mirrors agent_api._redact_secrets().
+    safe_kwargs = _redact_secrets(p.kwargs) if hasattr(p, "kwargs") else {}
     log_audit({
         "kind": "repair_approved",
         "actor": actor,
         "proposal_id": pid,
         "action": p.action,
-        "kwargs": p.kwargs,
+        "kwargs": safe_kwargs,
     })
 
     try:
@@ -729,7 +735,7 @@ def approval_approve(pid):
             "actor": actor,
             "proposal_id": pid,
             "action": p.action,
-            "kwargs": p.kwargs,
+            "kwargs": safe_kwargs,
             "error": str(e),
         })
         return render_template("error.html", message=f"שגיאה בביצוע: {e}"), 500
@@ -751,7 +757,9 @@ def approval_reject(pid):
     if p.status != "pending":
         return render_template("error.html", message=f"הבקשה כבר {p.status}"), 409
 
-    actor = request.form.get("actor") or os.environ.get("DASHBOARD_USER") or "operator"
+    # SECURITY: derive actor from authenticated principal, never from request.form.
+    actor = _actor_from_request()
+    safe_kwargs = _redact_secrets(p.kwargs) if hasattr(p, "kwargs") else {}
     reason = request.form.get("reason", "")
 
     set_status(pid, "rejected")
@@ -761,10 +769,69 @@ def approval_reject(pid):
         "actor": actor,
         "proposal_id": pid,
         "action": p.action,
-        "kwargs": p.kwargs,
+        "kwargs": safe_kwargs,
         "reason": reason,
     })
     return _redirect_to_dashboard()
+
+
+# Hostname validation: prevent path traversal via <host> URL params.
+# Mirrors host_config._validate_host_name (kept here to avoid a circular import).
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _validate_hostname(host: str) -> None:
+    """Reject hostnames with path-traversal or shell-meta characters.
+
+    Raises ValueError on bad input. Empty string, NUL bytes, slashes, `..`, etc.
+    are all rejected.
+    """
+    if not isinstance(host, str) or not _HOSTNAME_RE.match(host):
+        raise ValueError(f"invalid hostname: {host!r}")
+
+
+def _actor_from_request() -> str:
+    """Derive the audit `actor` from the authenticated principal.
+
+    SECURITY: never trust request.form['actor'] for the audit log. That would
+    allow any operator who can submit a form to spoof another operator's
+    approval/rejection in the audit trail. Instead, derive the actor from:
+      1. HTTP basic auth (request.authorization.username) — preferred
+      2. DASHBOARD_USER env var — for setups where reverse-proxy auth is used
+    Form-supplied actor is silently ignored.
+    """
+    auth = request.authorization
+    if auth and auth.username:
+        return auth.username
+    env_user = os.environ.get("DASHBOARD_USER", "")
+    if env_user:
+        return env_user
+    return "operator"  # last-resort fallback when no auth is configured
+
+
+# Mirror of agent_api._redact_secrets. Keeps audit-log writes from leaking
+# passwords/tokens that operators pass through RepairProposal.kwargs.
+_SECRET_KEYS = frozenset({
+    "password", "passwd", "pwd", "secret", "token", "api_key",
+    "apikey", "access_key", "secret_key", "private_key", "auth",
+    "authorization", "credential", "credentials", "ssh_key", "ssl_key",
+})
+
+
+def _redact_secrets(d: dict[str, Any] | None) -> dict[str, Any]:
+    """Redact values for keys that look like they carry credentials/secrets.
+
+    Recursively walks dicts and lists. Returns a new dict — does not mutate.
+    """
+    def scrub(v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: ("***REDACTED***" if k.lower() in _SECRET_KEYS else scrub(val))
+                    for k, val in v.items()}
+        if isinstance(v, list):
+            return [scrub(x) for x in v]
+        return v
+
+    return scrub(d or {})
 
 
 def _save_maintenance_state(host: str, state: dict | None) -> dict | None:
@@ -773,6 +840,7 @@ def _save_maintenance_state(host: str, state: dict | None) -> dict | None:
     Lightweight, additive: writes /var/lib/ipracticom-sweeper/maintenance/<host>.json.
     Returns the previous state (or None) for idempotent toggling.
     """
+    _validate_hostname(host)
     from pathlib import Path as _P
     import json as _json
     base = _P(os.environ.get(
@@ -795,6 +863,7 @@ def _save_maintenance_state(host: str, state: dict | None) -> dict | None:
 
 def _get_maintenance_state(host: str) -> dict | None:
     """Read the maintenance state for a host (or None if not under maintenance)."""
+    _validate_hostname(host)
     from pathlib import Path as _P
     import json as _json
     base = _P(os.environ.get(
@@ -881,6 +950,7 @@ def v6_machines_action(host: str):
 
     No state mutation here — this slice is queue-only.
     """
+    _validate_hostname(host)
     if _is_remote_mode():
         return jsonify({"ok": False, "error": "machine actions local-only"}), 400
 
@@ -891,26 +961,31 @@ def v6_machines_action(host: str):
             "error": f"unknown action {op!r}; expected agent_restart|reboot|ssm_connect",
         }), 400
 
+    quoted = shlex.quote(host)
     if op == "agent_restart":
         proposal = _enqueue_machine_action_proposal(
             host=host,
             action="agent_restart",
             reason=f"agent restart requested for {host} via v6 machines page",
-            command=f"systemctl restart ipracticom-sweeper-agent@{host}",
+            command=f"systemctl restart ipracticom-sweeper-agent@{quoted}",
         )
     elif op == "reboot":
         proposal = _enqueue_machine_action_proposal(
             host=host,
             action="reboot",
             reason=f"reboot requested for {host} via v6 machines page",
-            command=f"ssh {host} 'sudo shutdown -r now'",
+            command=f"ssh {quoted} 'sudo shutdown -r now'",
         )
     else:  # ssm_connect
         proposal = _enqueue_machine_action_proposal(
             host=host,
             action="ssm_connect",
             reason=f"SSM session requested for {host} via v6 machines page",
-            command=f"aws ssm start-session --target $(aws ssm describe-instances --filters Name=tag:Name,Values={host} --query 'Reservations[].Instances[].InstanceId' --output text)",
+            command=(
+                f"aws ssm start-session --target $(aws ssm describe-instances "
+                f"--filters Name=tag:Name,Values={quoted} "
+                f"--query 'Reservations[].Instances[].InstanceId' --output text)"
+            ),
         )
 
     return jsonify({"ok": True, "queued": True, "proposal": proposal})
@@ -1942,14 +2017,43 @@ def _summarize_module(module_data: dict) -> str:
 
 
 def main():
-    """Run the dashboard. Default 127.0.0.1:8787 (no auth — bind to localhost)."""
+    """Run the dashboard. Default 127.0.0.1:8804.
+
+    Fail-closed: if DASHBOARD_USER/PASS are unset AND --host is not loopback,
+    refuse to start unless --allow-open is passed. Mirrors agent_api.main() —
+    prevents accidentally exposing the unauthenticated dashboard to the network.
+    """
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(description="iPracticom Sweeper Dashboard")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--port", type=int, default=8804)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument(
+        "--allow-open",
+        action="store_true",
+        help="Explicitly allow OPEN mode (no basic auth) on a non-loopback host. "
+             "By default, OPEN mode + non-loopback is refused.",
+    )
     args = parser.parse_args()
+
+    auth_present = bool(
+        os.environ.get("DASHBOARD_USER", "") and os.environ.get("DASHBOARD_PASS", "")
+    )
+    is_loopback = args.host in ("127.0.0.1", "::1", "localhost", "")
+    if not auth_present and not is_loopback and not args.allow_open:
+        print(
+            f"[dashboard] REFUSING TO START: DASHBOARD_USER/PASS unset but "
+            f"--host={args.host} is not loopback. This would expose the dashboard "
+            f"unauthenticated (it has /approvals/<pid>/approve which executes repairs). "
+            f"Set DASHBOARD_USER/DASHBOARD_PASS or pass --allow-open.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"[dashboard] Starting on {args.host}:{args.port}")
+    print(f"[dashboard] Auth: {'basic' if auth_present else 'OPEN'}")
     app.run(host=args.host, port=args.port, debug=args.debug)
 
 
