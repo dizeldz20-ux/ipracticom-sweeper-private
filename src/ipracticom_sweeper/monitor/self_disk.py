@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .._log import log_suppressed
+
 DEFAULT_WARN_PCT = 80.0
 DEFAULT_CRIT_PCT = 95.0
 DEFAULT_INODE_WARN_PCT = 90.0
@@ -173,8 +175,8 @@ def audit_rotate(state_dir: Path, max_rotations: int = MAX_ROTATIONS) -> int:
             try:
                 stale.unlink()
                 removed += 1
-            except OSError:
-                pass
+            except OSError as e:
+                log_suppressed("self_disk_rotate_unlink", e)
 
     # Cascade: .N → .N+1
     for i in range(max_rotations, 0, -1):
@@ -190,8 +192,8 @@ def audit_rotate(state_dir: Path, max_rotations: int = MAX_ROTATIONS) -> int:
                     tmp_target.rename(target)
                 else:
                     older.rename(target)
-            except OSError:
-                pass
+            except OSError as e:
+                log_suppressed("self_disk_rotate_rename", e)
 
     # If the original log is still there (cascade top didn't move it),
     # move it to .1 + gzip
@@ -204,7 +206,7 @@ def audit_rotate(state_dir: Path, max_rotations: int = MAX_ROTATIONS) -> int:
                     shutil.copyfileobj(src, dst)
                 tmp.rename(first)
                 log.unlink()
-            except OSError:
-                pass
+            except OSError as e:
+                log_suppressed("self_disk_rotate_promote", e)
 
     return removed

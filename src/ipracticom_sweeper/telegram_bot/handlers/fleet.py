@@ -27,6 +27,7 @@ from ipracticom_sweeper.telegram_bot.services.agent_client import (
     AgentAPIError,
     AgentClient,
 )
+from ipracticom_sweeper._log import log_suppressed
 
 
 def _agent(context) -> AgentClient:
@@ -184,8 +185,8 @@ async def fleet_download(update, context) -> dict[str, Any]:
     if cq is not None:
         try:
             await cq.answer("מוריד לוג...")
-        except Exception:
-            pass
+        except Exception as e:
+            log_suppressed("fleet_log_download_ack", e)
 
     # Fetch the file from the agent_api.
     try:
@@ -254,8 +255,8 @@ async def fleet_download(update, context) -> dict[str, Any]:
                         [InlineKeyboardButton("⬅️ חזור", callback_data=f"fleet:host:{name}")],
                     ]),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log_suppressed("fleet_log_download_edit", e)
         return None  # signal: don't send another message
     except Exception as e:
         return {
@@ -267,8 +268,8 @@ async def fleet_download(update, context) -> dict[str, Any]:
     finally:
         try:
             os.unlink(tmp_path)
-        except OSError:
-            pass
+        except OSError as e:
+            log_suppressed("fleet_log_download_cleanup", e)
 
 
 # ---------- helpers ----------

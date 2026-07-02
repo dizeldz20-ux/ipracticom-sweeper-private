@@ -26,6 +26,8 @@ import subprocess
 import time
 from typing import Any
 
+from .._log import log_suppressed
+
 DEFAULT_SIP_PORT = 5060  # FS-03
 DEFAULT_SIPS_PORT = 5080  # FS-04
 DEFAULT_CLI_TIMEOUT = 5  # FS-05, seconds
@@ -97,8 +99,8 @@ def _port_listening(port: int, host: str = "127.0.0.1", timeout: float = 1.0) ->
     finally:
         try:
             sock.close()
-        except Exception:
-            pass
+        except Exception as e:
+            log_suppressed("freeswitch_port_probe_close", e)
 
 
 # --- FS-01..05 individual checks -------------------------------------------
