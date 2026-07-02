@@ -28,6 +28,16 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 - **Test gap closure (Level 1)**: 91 tests across audit_logger, self_disk,
   telegram_health, runbooks_engine — covers ENV-vars-at-import-time pitfalls
   and the actual dataclass field names that earlier tests got wrong
+- **Sprint 15 (Additional Repairs)**: 5 actions, 25 tests
+  - `repair_rotate_nginx_logs`: graceful nginx log rotation via SIGUSR1,
+    keeps N rotations (configurable), reports `bytes_freed`
+  - `repair_drop_freeswitch_cache`: `fs_cli cache flush`, pre-checks FS status
+  - `repair_reload_freeswitch_config`: `fs_cli reloadxml`, captures syntax
+    errors from stderr
+  - `repair_clear_freeswitch_voicemail_locks`: removes stale `.lock` files
+    older than `max_age_seconds`, preserves recent ones
+  - `repair_pg_vacuum`: `VACUUM [ANALYZE]` via psql, `dry_run` mode,
+    timeout, reports table names + duration
 
 ### Fixed
 - `ntp_check.py` — ntpq parser now handles `*`/`+`/`#`/`o`/`-` tally codes via
