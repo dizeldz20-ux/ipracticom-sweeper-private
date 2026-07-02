@@ -2,6 +2,18 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.4] — 2026-07-02 — Silent-Except Slice 5.6
+
+### Fixed
+- **Silent exception blocks** in 3 more files replaced with `log_suppressed()`:
+  - `agent_api.py`: 2 → 0 (rate-limit header, audit log read)
+  - `config/connectors.py`: 2 → 0 (mark_collected, mark_error races)
+  - `chat.py`: 2 → 0 (docs path resolve, ws error send)
+- **Cumulative since v1.5.0**: 60 silent blocks now auditable. Remaining: 9 in 9 files (v1.5.5+).
+
+### Notes
+- No public API change.
+
 ## [1.5.3] — 2026-07-02 — Silent-Except Slice 5.5
 
 ### Fixed
