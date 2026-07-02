@@ -2,6 +2,18 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.3] — 2026-07-02 — Silent-Except Slice 5.5
+
+### Fixed
+- **Silent exception blocks** in 3 more files replaced with `log_suppressed()`:
+  - `monitor/kernel_errors.py`: 2 → 0 (dmesg/journalctl probes)
+  - `monitor/smart_check.py`: 2 → 0 (temp/reallocated parsing)
+  - `monitor/disk.py`: 1 → 0 (readonly mount probe)
+- **Cumulative since v1.5.0**: 54 silent blocks now auditable. Remaining: 15 in 12 files (v1.5.4+).
+
+### Notes
+- No public API change.
+
 ## [1.5.2] — 2026-07-02 — Silent-Except Slice 5.4
 
 ### Fixed

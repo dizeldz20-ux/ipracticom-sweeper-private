@@ -28,5 +28,5 @@ logging.basicConfig(
 
 from . import diagnose, monitor, repair
 
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 __all__ = ["diagnose", "monitor", "repair"]
