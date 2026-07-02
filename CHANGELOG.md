@@ -2,6 +2,28 @@
 
 All notable changes are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.5] — 2026-07-02 — Silent-Except Slice 5.7
+
+### Fixed
+- **Silent exception blocks** in 9 more files replaced with `log_suppressed()`:
+  - `monitor/freeswitch.py`: 1 → 0 (port-anchor sock close at line 391)
+  - `config/legacy.py`: 1 → 0 (config fallback read)
+  - `config/paths.py`: 1 → 0 (state dir resolve)
+  - `repair/actions_extra.py`: 1 → 0 (action dispatch failure)
+  - `monitoring/otel.py`: 1 → 0 (OTLP export)
+  - `telegram_bot/health.py`: 1 → 0 (token tracker probe)
+  - `telegram_bot/formatter.py`: 1 → 0 (HTML escape failure)
+  - `telegram_bot/bot.py`: 1 → 0 (polling error handler)
+  - `monitor/self_snapshot.py`: 5 → 0 (state-dir disk%, audit size, bot token status, watchdog restart count)
+- **Cumulative since v1.5.0**: **73 silent blocks** now auditable (was 64).
+
+### Known
+- A separate regex-based scan (`test_silent_except_baseline_snapshot`) reports **~40 additional silent blocks** in `monitor/egress.py`, `monitor/security_baseline.py`, `repair/*.py` — these match the patterns `except X: pass`, `except X: continue`, bare `except:` and will be addressed in v1.5.6+.
+- The strict-zero gate (`test_50_5_no_silent_except_blocks_in_src`) remains **paused** at v1.5.5 and will be re-enabled in v1.5.6+ once that count reaches 0.
+
+### Notes
+- No public API change.
+
 ## [1.5.4] — 2026-07-02 — Silent-Except Slice 5.6
 
 ### Fixed
